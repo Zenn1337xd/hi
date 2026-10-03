@@ -1,6 +1,7 @@
 -- =======================================================
--- Ride a Pet Hub | Owned by kevan#9999
--- v3.0 - Clean Stop Loops, Hide/Show Dialog & Rarity Filters
+-- Kevan Hub | Ride a Pet
+-- Owned by kevan#9999
+-- Fixed Ranch Auto-Steal + Live Egg Radar & Teleport
 -- =======================================================
 
 local Players = game:GetService("Players")
@@ -21,64 +22,52 @@ if not hasCoreGui or not targetParent then
     targetParent = player:WaitForChild("PlayerGui")
 end
 
--- Remove old versions if running
-if targetParent:FindFirstChild("RidePetHubRoot") then
-    targetParent.RidePetHubRoot:Destroy()
+if targetParent:FindFirstChild("KevanPetHub") then
+    targetParent.KevanPetHub:Destroy()
 end
 
 -- =======================================================
--- RARITY DATABASE & SETTINGS
+-- RARITY DATABASE & CONFIG
 -- =======================================================
 local EGG_RARITIES = {
-    ["Cherub"] = "Ethereal",
-    ["Black Hole"] = "Ethereal",
-    ["Solaris"] = "Ethereal",
-    ["Void"] = "Ethereal",
-    ["Phoenix"] = "Divine",
-    ["Angelic"] = "Divine",
-    ["Volcanic"] = "Divine",
-    ["Galaxy"] = "Mythic",
-    ["Dragon"] = "Mythic",
-    ["Golden"] = "Legendary",
-    ["Crystal"] = "Legendary",
-    ["Magma"] = "Epic",
-    ["Forest"] = "Rare",
-    ["Desert"] = "Uncommon",
-    ["White"] = "Common"
+    ["Solaris"] = {Rarity = "Ethereal", Color = Color3.fromRGB(255, 65, 65)},
+    ["Cherub"] = {Rarity = "Ethereal", Color = Color3.fromRGB(255, 75, 120)},
+    ["Blackhole"] = {Rarity = "Ethereal", Color = Color3.fromRGB(180, 50, 255)},
+    ["Void"] = {Rarity = "Ethereal", Color = Color3.fromRGB(150, 40, 240)},
+    ["Phoenix"] = {Rarity = "Divine", Color = Color3.fromRGB(255, 215, 0)},
+    ["Angelic"] = {Rarity = "Divine", Color = Color3.fromRGB(255, 230, 100)},
+    ["Galaxy"] = {Rarity = "Mythic", Color = Color3.fromRGB(170, 70, 255)},
+    ["Shockwave"] = {Rarity = "Mythic", Color = Color3.fromRGB(130, 90, 255)},
+    ["Golden"] = {Rarity = "Legendary", Color = Color3.fromRGB(255, 170, 0)},
+    ["Crystal"] = {Rarity = "Legendary", Color = Color3.fromRGB(0, 210, 255)},
+    ["Magma"] = {Rarity = "Epic", Color = Color3.fromRGB(255, 100, 30)}
 }
 
-local function getEggRarity(name)
-    for eggName, rarity in pairs(EGG_RARITIES) do
-        if string.find(string.lower(name), string.lower(eggName)) then
-            return rarity
+local function getEggInfo(name)
+    local lower = string.lower(name)
+    for key, data in pairs(EGG_RARITIES) do
+        if string.find(lower, string.lower(key)) then
+            return data.Rarity, data.Color
         end
     end
-    -- Fallback checks based on keywords in name
-    local lower = string.lower(name)
-    if string.find(lower, "ethereal") or string.find(lower, "eternal") then return "Ethereal" end
-    if string.find(lower, "divine") then return "Divine" end
-    if string.find(lower, "mythic") then return "Mythic" end
-    if string.find(lower, "legendary") then return "Legendary" end
-    return "Normal"
+    if string.find(lower, "ethereal") or string.find(lower, "eternal") then return "Ethereal", Color3.fromRGB(255, 65, 65) end
+    if string.find(lower, "divine") then return "Divine", Color3.fromRGB(255, 215, 0) end
+    if string.find(lower, "mythic") then return "Mythic", Color3.fromRGB(170, 70, 255) end
+    if string.find(lower, "legendary") then return "Legendary", Color3.fromRGB(255, 170, 0) end
+    return "Normal", Color3.fromRGB(200, 200, 200)
 end
 
--- System States
+-- Toggles
 local speedEnabled = false
 local infJumpEnabled = false
 local espEnabled = false
-local checkerEnabled = true
 local autoStealEnabled = false
 local instantStealEnabled = false
-
--- Steal Filter Modes: 1 = All Eggs, 2 = Legendary+, 3 = Divine & Ethereal Only
-local stealFilterMode = 1
-local filterNames = {"All Eggs", "Legendary+", "Divine / Ethereal Only"}
-
-local currentTween = nil
-local jumpConnection = nil
 local speedConnection = nil
+local jumpConnection = nil
+local isStealingBusy = false
 
--- Notifications
+-- Safe Notification
 local function notify(title, text)
     pcall(function()
         StarterGui:SetCore("SendNotification", {
@@ -89,20 +78,134 @@ local function notify(title, text)
     end)
 end
 
-notify("Ride a Pet Hub", "Loaded | Owned by kevan#9999")
+notify("Kevan Hub", "Welcome back, kevan#9999!")
 
 -- =======================================================
--- SYSTEM CONTROLS (CLEAN STOP & START)
+-- LOCATION & STEAL ENGINE (FIXED RANCH LOGIC)
 -- =======================================================
 
--- 1. SPEED BOOST (1000)
-local function setSpeed(enabled)
-    speedEnabled = enabled
-    if speedConnection then
-        speedConnection:Disconnect()
-        speedConnection = nil
+-- Locate your ranch
+local function getMyRanchPosition()
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("BillboardGui") or v:IsA("TextLabel") then
+            if string.find(string.lower(tostring(v.Text or "")), "your ranch") then
+                local part = v:FindFirstAncestorWhichIsA("BasePart") or v.Adornee
+                if part then return part.Position end
+            end
+        end
+    end
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if string.find(string.lower(v.Name), string.lower(player.Name)) and string.find(string.lower(v.Name), "ranch") then
+            local part = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart")
+            if part then return part.Position end
+        end
+    end
+    local spawn = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+    return spawn and spawn.Position or Vector3.new(0, 10, 0)
+end
+
+-- Find all actual active eggs
+local function scanEggs()
+    local list = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if (obj:IsA("Model") or obj:IsA("BasePart")) and string.find(string.lower(obj.Name), "egg") then
+            local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
+            if part and not string.find(string.lower(obj.Name), "stand") and not string.find(string.lower(obj.Name), "hatch") then
+                table.insert(list, {
+                    Object = obj,
+                    Part = part,
+                    Name = obj.Name
+                })
+            end
+        end
+    end
+    return list
+end
+
+-- Stop physics flinging
+local function stabilizeCharacter()
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        local hrp = character.HumanoidRootPart
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end
+end
+
+-- Fixed Steal Routine
+local function doSteal(instant)
+    if isStealingBusy then return end
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local eggs = scanEggs()
+    if #eggs == 0 then return end
+
+    isStealingBusy = true
+    local homePos = getMyRanchPosition()
+
+    for _, eggData in ipairs(eggs) do
+        if not (autoStealEnabled or instantStealEnabled) then break end
+        local eggPart = eggData.Part
+
+        if eggPart and eggPart.Parent then
+            stabilizeCharacter()
+
+            -- Move to Egg
+            if instant then
+                root.CFrame = eggPart.CFrame * CFrame.new(0, 3.5, 0)
+            else
+                local tween = TweenService:Create(root, TweenInfo.new(1, Enum.EasingStyle.Linear), {CFrame = eggPart.CFrame * CFrame.new(0, 3.5, 0)})
+                tween:Play()
+                tween.Completed:Wait()
+            end
+            task.wait(0.2)
+
+            -- Interact / Steal
+            local prompt = eggData.Object:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt then
+                if fireproximityprompt then
+                    fireproximityprompt(prompt, 0)
+                else
+                    prompt:InputHoldBegin()
+                    task.wait(prompt.HoldDuration + 0.1)
+                    prompt:InputHoldEnd()
+                end
+            end
+            task.wait(0.4)
+
+            -- Deliver back to Ranch
+            stabilizeCharacter()
+            if instant then
+                root.CFrame = CFrame.new(homePos + Vector3.new(0, 5, 0))
+            else
+                local returnTween = TweenService:Create(root, TweenInfo.new(1, Enum.EasingStyle.Linear), {CFrame = CFrame.new(homePos + Vector3.new(0, 5, 0))})
+                returnTween:Play()
+                returnTween.Completed:Wait()
+            end
+            task.wait(0.6)
+        end
     end
 
+    stabilizeCharacter()
+    isStealingBusy = false
+end
+
+-- Steal Worker Loop
+task.spawn(function()
+    while true do
+        if instantStealEnabled then
+            doSteal(true)
+        elseif autoStealEnabled then
+            doSteal(false)
+        end
+        task.wait(0.5)
+    end
+end)
+
+-- Speed Boost Worker
+local function setSpeed(enabled)
+    speedEnabled = enabled
+    if speedConnection then speedConnection:Disconnect() speedConnection = nil end
     if enabled then
         speedConnection = RunService.Heartbeat:Connect(function()
             if character and character:FindFirstChildWhichIsA("Humanoid") then
@@ -115,21 +218,16 @@ local function setSpeed(enabled)
             end
         end)
     else
-        -- Clean reset to normal
         if character and character:FindFirstChildWhichIsA("Humanoid") then
             character:FindFirstChildWhichIsA("Humanoid").WalkSpeed = 16
         end
     end
 end
 
--- 2. INFINITE JUMP
+-- Infinite Jump Worker
 local function setInfJump(enabled)
     infJumpEnabled = enabled
-    if jumpConnection then
-        jumpConnection:Disconnect()
-        jumpConnection = nil
-    end
-
+    if jumpConnection then jumpConnection:Disconnect() jumpConnection = nil end
     if enabled then
         jumpConnection = UserInputService.JumpRequest:Connect(function()
             if character and character:FindFirstChildWhichIsA("Humanoid") then
@@ -139,236 +237,64 @@ local function setInfJump(enabled)
     end
 end
 
--- 3. EGG SCANNER & ESP
-local espStorage = {}
-
-local function clearESP()
-    for _, tag in ipairs(espStorage) do
-        if tag and tag.Parent then tag:Destroy() end
-    end
-    espStorage = {}
-end
-
-local function getEggs()
-    local eggs = {}
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") or obj:IsA("BasePart") then
-            local name = string.lower(obj.Name)
-            if string.find(name, "egg") or obj:FindFirstChildWhichIsA("ProximityPrompt") then
-                table.insert(eggs, obj)
-            end
-        end
-    end
-    return eggs
-end
-
-local function updateESP()
-    clearESP()
-    if not espEnabled then return end
-
-    local eggs = getEggs()
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-
-    for _, egg in ipairs(eggs) do
-        local targetPart = egg:IsA("BasePart") and egg or egg:FindFirstChildWhichIsA("BasePart")
-        if targetPart and not targetPart:FindFirstChild("EggESP") then
-            local rarity = getEggRarity(egg.Name)
-
-            local bill = Instance.new("BillboardGui")
-            bill.Name = "EggESP"
-            bill.Size = UDim2.new(0, 160, 0, 50)
-            bill.AlwaysOnTop = true
-            bill.Adornee = targetPart
-
-            local txt = Instance.new("TextLabel")
-            txt.Size = UDim2.new(1, 0, 1, 0)
-            txt.BackgroundTransparency = 1
-            txt.TextColor3 = (rarity == "Ethereal" and Color3.fromRGB(255, 60, 60))
-                or (rarity == "Divine" and Color3.fromRGB(255, 215, 0))
-                or (rarity == "Mythic" and Color3.fromRGB(200, 80, 255))
-                or (rarity == "Legendary" and Color3.fromRGB(255, 170, 0))
-                or Color3.fromRGB(255, 255, 255)
-            txt.TextStrokeTransparency = 0
-            txt.Font = Enum.Font.GothamBold
-            txt.TextSize = 11
-            txt.Parent = bill
-            bill.Parent = targetPart
-            table.insert(espStorage, bill)
-
-            task.spawn(function()
-                while espEnabled and targetPart and targetPart.Parent do
-                    if root then
-                        local studs = math.floor((root.Position - targetPart.Position).Magnitude)
-                        local meters = math.floor(studs * 0.28)
-                        local weight = egg:GetAttribute("Weight") or egg:GetAttribute("Kg") or "?"
-                        txt.Text = string.format("[%s]\n%s | %dm | %skg", egg.Name, rarity, meters, tostring(weight))
-                    end
-                    task.wait(0.5)
-                end
-                if bill then bill:Destroy() end
-            end)
-        end
-    end
-end
-
--- 4. LIVE SPAWN ITEM CHECKER
-workspace.DescendantAdded:Connect(function(descendant)
-    if checkerEnabled then
-        local rarity = getEggRarity(descendant.Name)
-        if rarity == "Ethereal" or rarity == "Divine" or rarity == "Mythic" then
-            notify("⭐ Rare Spawn!", descendant.Name .. " (" .. rarity .. ") appeared!")
-        end
-    end
-end)
-
--- 5. STEAL LOGIC WITH RARITY MATCH
-local function matchesFilter(egg)
-    local rarity = getEggRarity(egg.Name)
-    if stealFilterMode == 1 then
-        return true -- All
-    elseif stealFilterMode == 2 then
-        return (rarity == "Legendary" or rarity == "Mythic" or rarity == "Divine" or rarity == "Ethereal")
-    elseif stealFilterMode == 3 then
-        return (rarity == "Divine" or rarity == "Ethereal")
-    end
-    return true
-end
-
-local function findHomeBase()
-    for _, plot in ipairs(workspace:GetDescendants()) do
-        if string.find(string.lower(plot.Name), "base") or string.find(string.lower(plot.Name), "plot") then
-            if plot:FindFirstChild(player.Name) or plot:GetAttribute("Owner") == player.Name then
-                return plot:IsA("BasePart") and plot.Position or (plot:FindFirstChildWhichIsA("BasePart") and plot:FindFirstChildWhichIsA("BasePart").Position)
-            end
-        end
-    end
-    local spawn = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
-    return spawn and spawn.Position or Vector3.new(0, 5, 0)
-end
-
-local function runStealCycle(instant)
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-
-    local homePos = findHomeBase()
-    local eggs = getEggs()
-
-    for _, egg in ipairs(eggs) do
-        -- Stop immediately if toggled off
-        if (not autoStealEnabled) and (not instantStealEnabled) then
-            if currentTween then currentTween:Cancel() end
-            break
-        end
-
-        if matchesFilter(egg) then
-            local eggPart = egg:IsA("BasePart") and egg or egg:FindFirstChildWhichIsA("BasePart")
-            if eggPart and eggPart.Parent then
-                if instant then
-                    root.CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)
-                else
-                    currentTween = TweenService:Create(root, TweenInfo.new(1.2, Enum.EasingStyle.Linear), {CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)})
-                    currentTween:Play()
-                    currentTween.Completed:Wait()
-                end
-
-                -- Prompt grab
-                local prompt = egg:FindFirstChildWhichIsA("ProximityPrompt", true)
-                if prompt then
-                    if fireproximityprompt then
-                        fireproximityprompt(prompt)
-                    else
-                        prompt:InputHoldBegin()
-                        task.wait(prompt.HoldDuration + 0.1)
-                        prompt:InputHoldEnd()
-                    end
-                end
-                task.wait(0.3)
-
-                -- Return to Base
-                if instant then
-                    root.CFrame = CFrame.new(homePos + Vector3.new(0, 4, 0))
-                else
-                    currentTween = TweenService:Create(root, TweenInfo.new(1.2, Enum.EasingStyle.Linear), {CFrame = CFrame.new(homePos + Vector3.new(0, 4, 0))})
-                    currentTween:Play()
-                    currentTween.Completed:Wait()
-                end
-                task.wait(0.8)
-            end
-        end
-    end
-end
-
--- Dedicated Steal Worker
-task.spawn(function()
-    while true do
-        if instantStealEnabled then
-            runStealCycle(true)
-        elseif autoStealEnabled then
-            runStealCycle(false)
-        end
-        task.wait(1)
-    end
-end)
-
 -- =======================================================
--- USER INTERFACE WITH SHOW/HIDE TOGGLE
+-- USER INTERFACE
 -- =======================================================
 
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "RidePetHubRoot"
+screenGui.Name = "KevanPetHub"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = targetParent
 
--- Floating Open/Close Button (Always accessible)
+-- 1. Floating Logo Button: Stylized 'K' for Kevan
 local openBtn = Instance.new("TextButton")
-openBtn.Name = "FloatingToggle"
-openBtn.Size = UDim2.new(0, 60, 0, 60)
+openBtn.Name = "KevanFloatingLogo"
+openBtn.Size = UDim2.new(0, 55, 0, 55)
 openBtn.Position = UDim2.new(0.02, 0, 0.45, 0)
-openBtn.BackgroundColor3 = Color3.fromRGB(35, 38, 52)
-openBtn.Text = "PET\nHUB"
-openBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-openBtn.TextSize = 12
-openBtn.Font = Enum.Font.GothamBold
+openBtn.BackgroundColor3 = Color3.fromRGB(25, 27, 38)
+openBtn.Text = "K"
+openBtn.TextColor3 = Color3.fromRGB(255, 215, 0) -- Gold emblem
+openBtn.TextSize = 28
+openBtn.Font = Enum.Font.FredokaOne
 openBtn.Active = true
 openBtn.Draggable = true
 openBtn.Parent = screenGui
 
-local openCorner = Instance.new("UICorner")
-openCorner.CornerRadius = UDim.new(1, 0) -- Circular
-openCorner.Parent = openBtn
+local logoCorner = Instance.new("UICorner")
+logoCorner.CornerRadius = UDim.new(1, 0)
+logoCorner.Parent = openBtn
 
-local openStroke = Instance.new("UIStroke")
-openStroke.Color = Color3.fromRGB(114, 137, 218)
-openStroke.Thickness = 2
-openStroke.Parent = openBtn
+local logoStroke = Instance.new("UIStroke")
+logoStroke.Color = Color3.fromRGB(255, 215, 0)
+logoStroke.Thickness = 2.5
+logoStroke.Parent = openBtn
 
--- Main Frame
+-- 2. Main Dialog Frame
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 310, 0, 390)
-mainFrame.Position = UDim2.new(0.5, -155, 0.35, -195)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 21, 28)
+mainFrame.Size = UDim2.new(0, 330, 0, 410)
+mainFrame.Position = UDim2.new(0.5, -165, 0.35, -205)
+mainFrame.BackgroundColor3 = Color3.fromRGB(18, 19, 26)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
 mainFrame.Draggable = true
 mainFrame.Visible = true
 mainFrame.Parent = screenGui
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 10)
-corner.Parent = mainFrame
+local frameCorner = Instance.new("UICorner")
+frameCorner.CornerRadius = UDim.new(0, 10)
+frameCorner.Parent = mainFrame
 
--- Floating Toggle click logic
 openBtn.MouseButton1Click:Connect(function()
     mainFrame.Visible = not mainFrame.Visible
 end)
 
--- Title & Header
+-- Title Header
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -70, 0, 20)
 title.Position = UDim2.new(0, 12, 0, 8)
 title.BackgroundTransparency = 1
-title.Text = "Ride a Pet Hub v3"
+title.Text = "Kevan Hub | Ride a Pet"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 14
 title.Font = Enum.Font.GothamBold
@@ -380,36 +306,17 @@ ownerTag.Size = UDim2.new(1, -70, 0, 16)
 ownerTag.Position = UDim2.new(0, 12, 0, 26)
 ownerTag.BackgroundTransparency = 1
 ownerTag.Text = "Owned by kevan#9999"
-ownerTag.TextColor3 = Color3.fromRGB(114, 137, 218)
+ownerTag.TextColor3 = Color3.fromRGB(255, 215, 0)
 ownerTag.TextSize = 11
 ownerTag.Font = Enum.Font.GothamMedium
 ownerTag.TextXAlignment = Enum.TextXAlignment.Left
 ownerTag.Parent = mainFrame
 
--- Minimize Button (Hides Dialog)
-local hideBtn = Instance.new("TextButton")
-hideBtn.Size = UDim2.new(0, 24, 0, 24)
-hideBtn.Position = UDim2.new(1, -56, 0, 8)
-hideBtn.BackgroundColor3 = Color3.fromRGB(60, 64, 80)
-hideBtn.Text = "—"
-hideBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-hideBtn.TextSize = 13
-hideBtn.Font = Enum.Font.GothamBold
-hideBtn.Parent = mainFrame
-
-local hideCorner = Instance.new("UICorner")
-hideCorner.CornerRadius = UDim.new(0, 6)
-hideCorner.Parent = hideBtn
-
-hideBtn.MouseButton1Click:Connect(function()
-    mainFrame.Visible = false
-end)
-
--- Close Button (Hides Dialog)
+-- Close Button
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0, 24, 0, 24)
-closeBtn.Position = UDim2.new(1, -28, 0, 8)
-closeBtn.BackgroundColor3 = Color3.fromRGB(215, 60, 60)
+closeBtn.Position = UDim2.new(1, -30, 0, 8)
+closeBtn.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
 closeBtn.Text = "X"
 closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 closeBtn.TextSize = 12
@@ -422,35 +329,93 @@ closeCorner.Parent = closeBtn
 
 closeBtn.MouseButton1Click:Connect(function()
     mainFrame.Visible = false
-    notify("Hub Hidden", "Tap the floating 'PET HUB' button to reopen!")
+    notify("Kevan Hub", "Tap floating 'K' logo to reopen!")
 end)
 
--- Scroll Area
-local container = Instance.new("ScrollingFrame")
-container.Size = UDim2.new(1, -16, 1, -55)
-container.Position = UDim2.new(0, 8, 0, 50)
-container.BackgroundTransparency = 1
-container.ScrollBarThickness = 3
-container.CanvasSize = UDim2.new(0, 0, 0, 390)
-container.Parent = mainFrame
+-- Tabs Switcher (Cheats / Egg Radar)
+local tabFrame = Instance.new("Frame")
+tabFrame.Size = UDim2.new(1, -20, 0, 30)
+tabFrame.Position = UDim2.new(0, 10, 0, 48)
+tabFrame.BackgroundTransparency = 1
+tabFrame.Parent = mainFrame
 
-local layout = Instance.new("UIListLayout")
-layout.Parent = container
-layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-layout.SortOrder = Enum.SortOrder.LayoutOrder
-layout.Padding = UDim.new(0, 6)
+local cheatsTabBtn = Instance.new("TextButton")
+cheatsTabBtn.Size = UDim2.new(0.48, 0, 1, 0)
+cheatsTabBtn.BackgroundColor3 = Color3.fromRGB(45, 48, 65)
+cheatsTabBtn.Text = "Main Cheats"
+cheatsTabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+cheatsTabBtn.Font = Enum.Font.GothamBold
+cheatsTabBtn.TextSize = 12
+cheatsTabBtn.Parent = tabFrame
 
--- Helper Button Constructors
-local function makeToggle(name, defaultState, callback)
+local radarTabBtn = Instance.new("TextButton")
+radarTabBtn.Size = UDim2.new(0.48, 0, 1, 0)
+radarTabBtn.Position = UDim2.new(0.52, 0, 0, 0)
+radarTabBtn.BackgroundColor3 = Color3.fromRGB(32, 34, 46)
+radarTabBtn.Text = "Egg Radar & TP"
+radarTabBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+radarTabBtn.Font = Enum.Font.GothamBold
+radarTabBtn.TextSize = 12
+radarTabBtn.Parent = tabFrame
+
+Instance.new("UICorner", cheatsTabBtn).CornerRadius = UDim.new(0, 6)
+Instance.new("UICorner", radarTabBtn).CornerRadius = UDim.new(0, 6)
+
+-- Main Cheats Container
+local cheatsScroll = Instance.new("ScrollingFrame")
+cheatsScroll.Size = UDim2.new(1, -20, 1, -90)
+cheatsScroll.Position = UDim2.new(0, 10, 0, 85)
+cheatsScroll.BackgroundTransparency = 1
+cheatsScroll.ScrollBarThickness = 3
+cheatsScroll.CanvasSize = UDim2.new(0, 0, 0, 280)
+cheatsScroll.Parent = mainFrame
+
+local cheatsLayout = Instance.new("UIListLayout")
+cheatsLayout.Parent = cheatsScroll
+cheatsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+cheatsLayout.Padding = UDim.new(0, 6)
+
+-- Radar Container
+local radarScroll = Instance.new("ScrollingFrame")
+radarScroll.Size = UDim2.new(1, -20, 1, -90)
+radarScroll.Position = UDim2.new(0, 10, 0, 85)
+radarScroll.BackgroundTransparency = 1
+radarScroll.ScrollBarThickness = 3
+radarScroll.Visible = false
+radarScroll.CanvasSize = UDim2.new(0, 0, 0, 300)
+radarScroll.Parent = mainFrame
+
+local radarLayout = Instance.new("UIListLayout")
+radarLayout.Parent = radarScroll
+radarLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+radarLayout.Padding = UDim.new(0, 6)
+
+-- Tab Switch Events
+cheatsTabBtn.MouseButton1Click:Connect(function()
+    cheatsScroll.Visible = true
+    radarScroll.Visible = false
+    cheatsTabBtn.BackgroundColor3 = Color3.fromRGB(45, 48, 65)
+    radarTabBtn.BackgroundColor3 = Color3.fromRGB(32, 34, 46)
+end)
+
+radarTabBtn.MouseButton1Click:Connect(function()
+    cheatsScroll.Visible = false
+    radarScroll.Visible = true
+    radarTabBtn.BackgroundColor3 = Color3.fromRGB(45, 48, 65)
+    cheatsTabBtn.BackgroundColor3 = Color3.fromRGB(32, 34, 46)
+end)
+
+-- Helper Toggle Generator
+local function makeToggle(parent, name, defaultState, callback)
     local state = defaultState
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.96, 0, 0, 35)
-    btn.BackgroundColor3 = state and Color3.fromRGB(50, 168, 82) or Color3.fromRGB(38, 40, 52)
+    btn.Size = UDim2.new(0.96, 0, 0, 34)
+    btn.BackgroundColor3 = state and Color3.fromRGB(46, 170, 85) or Color3.fromRGB(35, 37, 50)
     btn.Text = name .. ": " .. (state and "ON" or "OFF")
     btn.TextColor3 = Color3.fromRGB(255, 255, 255)
     btn.TextSize = 12
     btn.Font = Enum.Font.GothamMedium
-    btn.Parent = container
+    btn.Parent = parent
 
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, 6)
@@ -458,74 +423,116 @@ local function makeToggle(name, defaultState, callback)
 
     btn.MouseButton1Click:Connect(function()
         state = not state
-        btn.BackgroundColor3 = state and Color3.fromRGB(50, 168, 82) or Color3.fromRGB(38, 40, 52)
+        btn.BackgroundColor3 = state and Color3.fromRGB(46, 170, 85) or Color3.fromRGB(35, 37, 50)
         btn.Text = name .. ": " .. (state and "ON" or "OFF")
         callback(state)
     end)
     return btn
 end
 
--- 1. SPEED BOOST TOGGLE
-makeToggle("Speed Boost (1000)", false, function(on)
+-- =======================================================
+-- POPULATE CHEATS TAB
+-- =======================================================
+makeToggle(cheatsScroll, "Speed Boost (1000)", false, function(on)
     setSpeed(on)
 end)
 
--- 2. INFINITE JUMP TOGGLE
-makeToggle("Infinite Jump (10x)", false, function(on)
+makeToggle(cheatsScroll, "Infinite Jump (10x)", false, function(on)
     setInfJump(on)
 end)
 
--- 3. ESP TOGGLE
-makeToggle("ESP Eggs (Distance / Rarity / Kg)", false, function(on)
-    espEnabled = on
-    if on then
-        updateESP()
-    else
-        clearESP()
-    end
-end)
-
--- 4. CHECKER TOGGLE
-makeToggle("Spawn Item Alert (Rare/Divine)", true, function(on)
-    checkerEnabled = on
-end)
-
--- 5. RARITY FILTER BUTTON
-local filterBtn = Instance.new("TextButton")
-filterBtn.Size = UDim2.new(0.96, 0, 0, 35)
-filterBtn.BackgroundColor3 = Color3.fromRGB(70, 75, 105)
-filterBtn.Text = "Target Rarity: " .. filterNames[stealFilterMode]
-filterBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-filterBtn.TextSize = 12
-filterBtn.Font = Enum.Font.GothamMedium
-filterBtn.Parent = container
-
-local filterCorner = Instance.new("UICorner")
-filterCorner.CornerRadius = UDim.new(0, 6)
-filterCorner.Parent = filterBtn
-
-filterBtn.MouseButton1Click:Connect(function()
-    stealFilterMode = (stealFilterMode % #filterNames) + 1
-    filterBtn.Text = "Target Rarity: " .. filterNames[stealFilterMode]
-    notify("Target Filter Changed", filterNames[stealFilterMode])
-end)
-
--- 6. AUTO STEAL TOGGLE
-makeToggle("Auto Steal Eggs", false, function(on)
+makeToggle(cheatsScroll, "Auto Steal Eggs (to Ranch)", false, function(on)
     autoStealEnabled = on
-    if on then
-        instantStealEnabled = false
-    else
-        if currentTween then currentTween:Cancel() end
-    end
+    if on then instantStealEnabled = false end
 end)
 
--- 7. INSTANT STEAL TOGGLE
-makeToggle("Instant Steal Eggs (Teleport)", false, function(on)
+makeToggle(cheatsScroll, "Instant Steal Eggs (TP to Ranch)", false, function(on)
     instantStealEnabled = on
-    if on then
-        autoStealEnabled = false
-    else
-        if currentTween then currentTween:Cancel() end
-    end
+    if on then autoStealEnabled = false end
 end)
+
+-- =======================================================
+-- POPULATE EGG RADAR & TELEPORT TAB
+-- =======================================================
+local function refreshRadar()
+    for _, child in ipairs(radarScroll:GetChildren()) do
+        if child:IsA("Frame") or child:IsA("TextButton") then
+            child:Destroy()
+        end
+    end
+
+    -- Refresh Action Button
+    local refBtn = Instance.new("TextButton")
+    refBtn.Size = UDim2.new(0.96, 0, 0, 30)
+    refBtn.BackgroundColor3 = Color3.fromRGB(55, 60, 85)
+    refBtn.Text = "🔄 Scan / Refresh Map Eggs"
+    refBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    refBtn.Font = Enum.Font.GothamBold
+    refBtn.TextSize = 12
+    refBtn.Parent = radarScroll
+    Instance.new("UICorner", refBtn).CornerRadius = UDim.new(0, 6)
+    refBtn.MouseButton1Click:Connect(refreshRadar)
+
+    local eggs = scanEggs()
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+
+    if #eggs == 0 then
+        local emptyLbl = Instance.new("TextLabel")
+        emptyLbl.Size = UDim2.new(0.96, 0, 0, 40)
+        emptyLbl.BackgroundTransparency = 1
+        emptyLbl.Text = "No Eggs currently spotted in workspace."
+        emptyLbl.TextColor3 = Color3.fromRGB(180, 180, 180)
+        emptyLbl.Font = Enum.Font.Gotham
+        emptyLbl.TextSize = 11
+        emptyLbl.Parent = radarScroll
+        return
+    end
+
+    radarScroll.CanvasSize = UDim2.new(0, 0, 0, 40 + (#eggs * 46))
+
+    for _, eggData in ipairs(eggs) do
+        local rarity, rarityColor = getEggInfo(eggData.Name)
+        local dist = root and math.floor((root.Position - eggData.Part.Position).Magnitude * 0.28) or 0
+
+        local card = Instance.new("Frame")
+        card.Size = UDim2.new(0.96, 0, 0, 40)
+        card.BackgroundColor3 = Color3.fromRGB(28, 30, 40)
+        card.Parent = radarScroll
+        Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
+
+        -- Egg Name & Rarity Label
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0.68, 0, 1, 0)
+        lbl.Position = UDim2.new(0, 8, 0, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = eggData.Name .. " (" .. rarity .. ")\n" .. dist .. "m away"
+        lbl.TextColor3 = rarityColor
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextSize = 11
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = card
+
+        -- Direct Teleport Button
+        local tpBtn = Instance.new("TextButton")
+        tpBtn.Size = UDim2.new(0.26, 0, 0, 28)
+        tpBtn.Position = UDim2.new(0.72, 0, 0.15, 0)
+        tpBtn.BackgroundColor3 = Color3.fromRGB(70, 75, 110)
+        tpBtn.Text = "TP"
+        tpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        tpBtn.Font = Enum.Font.GothamBold
+        tpBtn.TextSize = 12
+        tpBtn.Parent = card
+        Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0, 6)
+
+        tpBtn.MouseButton1Click:Connect(function()
+            if character and character:FindFirstChild("HumanoidRootPart") and eggData.Part and eggData.Part.Parent then
+                stabilizeCharacter()
+                character.HumanoidRootPart.CFrame = eggData.Part.CFrame * CFrame.new(0, 4, 0)
+                stabilizeCharacter()
+                notify("Teleported!", "Moved to " .. eggData.Name)
+            end
+        end)
+    end
+end
+
+refreshRadar()
