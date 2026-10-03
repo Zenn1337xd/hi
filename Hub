@@ -1,49 +1,249 @@
 -- =======================================================
 -- Ride a Pet Hub | Owned by kevan#9999
--- Hosted Raw Script for loadstring
+-- Full Automation & ESP Suite for Delta
 -- =======================================================
 
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
+local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
-local targetParent = nil
+local character = player.Character or player.CharacterAdded:Wait()
+player.CharacterAdded:Connect(function(char) character = char end)
 
--- Determine appropriate UI container (CoreGui fallback to PlayerGui)
-local hasCoreGui, _ = pcall(function()
-    targetParent = CoreGui
-end)
+-- UI Container setup
+local targetParent = nil
+local hasCoreGui = pcall(function() targetParent = CoreGui end)
 if not hasCoreGui or not targetParent then
     targetParent = player:WaitForChild("PlayerGui")
 end
 
--- Destroy previous session to prevent duplicates
 if targetParent:FindFirstChild("RidePetHub") then
     targetParent.RidePetHub:Destroy()
 end
 
--- Notification on launch
-pcall(function()
-    StarterGui:SetCore("SendNotification", {
-        Title = "Ride a Pet Hub",
-        Text = "Owned by kevan#9999",
-        Duration = 4
-    })
+-- State Variables
+local speedEnabled = false
+local infJumpEnabled = false
+local espEnabled = false
+local autoStealEnabled = false
+local instantStealEnabled = false
+local checkerEnabled = true
+
+-- Utility: Safe Notifications
+local function notify(title, text)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = title,
+            Text = text,
+            Duration = 3
+        })
+    end)
+end
+
+notify("Ride a Pet Hub", "Loaded | Owned by kevan#9999")
+
+-- =======================================================
+-- CORE FEATURES ENGINE
+-- =======================================================
+
+-- 1. SPEED BOOST (Handles both Character & Pet Mounts)
+RunService.Heartbeat:Connect(function()
+    if speedEnabled and character then
+        local hum = character:FindFirstChildWhichIsA("Humanoid")
+        if hum then
+            hum.WalkSpeed = 1000
+            -- Check if riding a seat / pet vehicle
+            if hum.SeatPart and hum.SeatPart:IsA("VehicleSeat") then
+                hum.SeatPart.MaxSpeed = 1000
+                hum.SeatPart.ThrottleFloat = 1
+            end
+        end
+    end
 end)
 
--- Root ScreenGui
+-- 2. INFINITE JUMP
+UserInputService.JumpRequest:Connect(function()
+    if infJumpEnabled and character then
+        local hum = character:FindFirstChildWhichIsA("Humanoid")
+        if hum then
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+end)
+
+-- Helper: Locate Eggs in Workspace
+local function getEggs()
+    local eggs = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") or obj:IsA("BasePart") then
+            local name = string.lower(obj.Name)
+            if string.find(name, "egg") or obj:FindFirstChildWhichIsA("ProximityPrompt") then
+                table.insert(eggs, obj)
+            end
+        end
+    end
+    return eggs
+end
+
+-- 3. ESP FOR EGGS (Name, Distance in meters, Attributes/Kg)
+local espStorage = {}
+
+local function clearESP()
+    for _, v in pairs(espStorage) do
+        if v then v:Destroy() end
+    end
+    espStorage = {}
+end
+
+local function updateESP()
+    if not espEnabled then
+        clearESP()
+        return
+    end
+
+    local eggs = getEggs()
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+
+    for _, egg in ipairs(eggs) do
+        local targetPart = egg:IsA("BasePart") and egg or egg:FindFirstChildWhichIsA("BasePart")
+        if targetPart and not targetPart:FindFirstChild("EggTag") then
+            -- Billboard Label
+            local bill = Instance.new("BillboardGui")
+            bill.Name = "EggTag"
+            bill.Size = UDim2.new(0, 150, 0, 45)
+            bill.AlwaysOnTop = true
+            bill.Adornee = targetPart
+
+            local txt = Instance.new("TextLabel")
+            txt.Size = UDim2.new(1, 0, 1, 0)
+            txt.BackgroundTransparency = 1
+            txt.TextColor3 = Color3.fromRGB(255, 230, 0)
+            txt.TextStrokeTransparency = 0
+            txt.Font = Enum.Font.GothamBold
+            txt.TextSize = 11
+            txt.Parent = bill
+
+            bill.Parent = targetPart
+            table.insert(espStorage, bill)
+
+            -- Live distance & stat calculation
+            task.spawn(function()
+                while espEnabled and targetPart and targetPart.Parent do
+                    if root then
+                        local studs = math.floor((root.Position - targetPart.Position).Magnitude)
+                        local meters = math.floor(studs * 0.28) -- 1 stud ≈ 0.28 meters
+                        local kgText = targetPart.Parent:GetAttribute("Weight") or targetPart.Parent:GetAttribute("Kg") or "N/A"
+                        txt.Text = string.format("[%s]\n%dm | %s kg", egg.Name, meters, tostring(kgText))
+                    end
+                    task.wait(0.5)
+                end
+                if bill then bill:Destroy() end
+            end)
+        end
+    end
+end
+
+-- 4. SPAWN CHECKER (Divine / Eternal alerts)
+workspace.DescendantAdded:Connect(function(descendant)
+    if checkerEnabled then
+        local nameLower = string.lower(descendant.Name)
+        if string.find(nameLower, "eternal") or string.find(nameLower, "divine") or string.find(nameLower, "mythic") then
+            notify("Rare Spawn Alert!", descendant.Name .. " has spawned!")
+        end
+    end
+end)
+
+-- 5. AUTO & INSTANT STEAL
+local function findHomeBase()
+    -- Look for plot or base matching player name
+    for _, plot in ipairs(workspace:GetDescendants()) do
+        if string.find(string.lower(plot.Name), "base") or string.find(string.lower(plot.Name), "plot") then
+            if plot:FindFirstChild(player.Name) or plot:GetAttribute("Owner") == player.Name then
+                return plot:IsA("BasePart") and plot.Position or (plot:FindFirstChildWhichIsA("BasePart") and plot:FindFirstChildWhichIsA("BasePart").Position)
+            end
+        end
+    end
+    -- Fallback to spawn point
+    local spawn = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+    return spawn and spawn.Position or Vector3.new(0, 5, 0)
+end
+
+local function executeSteal(instant)
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local homePos = findHomeBase()
+    local eggs = getEggs()
+
+    for _, egg in ipairs(eggs) do
+        if not (autoStealEnabled or instantStealEnabled) then break end
+        local eggPart = egg:IsA("BasePart") and egg or egg:FindFirstChildWhichIsA("BasePart")
+        
+        if eggPart then
+            -- Move to egg
+            if instant then
+                root.CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)
+            else
+                local tween = TweenService:Create(root, TweenInfo.new(1.5, Enum.EasingStyle.Linear), {CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)})
+                tween:Play()
+                tween.Completed:Wait()
+            end
+
+            -- Trigger interaction prompt if present
+            local prompt = egg:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt then
+                if fireproximityprompt then
+                    fireproximityprompt(prompt)
+                else
+                    prompt:InputHoldBegin()
+                    task.wait(prompt.HoldDuration + 0.1)
+                    prompt:InputHoldEnd()
+                end
+            end
+            task.wait(0.3)
+
+            -- Return to base with egg
+            if instant then
+                root.CFrame = CFrame.new(homePos + Vector3.new(0, 4, 0))
+            else
+                local returnTween = TweenService:Create(root, TweenInfo.new(1.5, Enum.EasingStyle.Linear), {CFrame = CFrame.new(homePos + Vector3.new(0, 4, 0))})
+                returnTween:Play()
+                returnTween.Completed:Wait()
+            end
+            task.wait(1)
+        end
+    end
+end
+
+task.spawn(function()
+    while true do
+        if instantStealEnabled then
+            executeSteal(true)
+        elseif autoStealEnabled then
+            executeSteal(false)
+        end
+        task.wait(1)
+    end
+end)
+
+-- =======================================================
+-- USER INTERFACE
+-- =======================================================
+
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "RidePetHub"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = targetParent
 
--- Main Window Frame
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 310, 0, 245)
-mainFrame.Position = UDim2.new(0.5, -155, 0.4, -122)
-mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
+mainFrame.Size = UDim2.new(0, 320, 0, 380)
+mainFrame.Position = UDim2.new(0.5, -160, 0.35, -190)
+mainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
 mainFrame.Draggable = true
@@ -53,31 +253,29 @@ local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 10)
 corner.Parent = mainFrame
 
--- Title
+-- Title & Owner Header
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -45, 0, 22)
+title.Size = UDim2.new(1, -45, 0, 20)
 title.Position = UDim2.new(0, 12, 0, 8)
 title.BackgroundTransparency = 1
-title.Text = "Ride a Pet Hub"
+title.Text = "Ride a Pet Hub v2"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 15
 title.Font = Enum.Font.GothamBold
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = mainFrame
 
--- Owner Credit Sub-header
 local ownerTag = Instance.new("TextLabel")
 ownerTag.Size = UDim2.new(1, -45, 0, 16)
 ownerTag.Position = UDim2.new(0, 12, 0, 28)
 ownerTag.BackgroundTransparency = 1
 ownerTag.Text = "Owned by kevan#9999"
-ownerTag.TextColor3 = Color3.fromRGB(114, 137, 218) -- Discord blurple accent
+ownerTag.TextColor3 = Color3.fromRGB(114, 137, 218)
 ownerTag.TextSize = 12
 ownerTag.Font = Enum.Font.GothamMedium
 ownerTag.TextXAlignment = Enum.TextXAlignment.Left
 ownerTag.Parent = mainFrame
 
--- Close Button
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0, 24, 0, 24)
 closeBtn.Position = UDim2.new(1, -32, 0, 8)
@@ -96,79 +294,73 @@ closeBtn.MouseButton1Click:Connect(function()
     screenGui:Destroy()
 end)
 
--- Layout Container
-local buttonContainer = Instance.new("Frame")
-buttonContainer.Size = UDim2.new(1, 0, 1, -52)
-buttonContainer.Position = UDim2.new(0, 0, 0, 52)
-buttonContainer.BackgroundTransparency = 1
-buttonContainer.Parent = mainFrame
+-- Button Container
+local container = Instance.new("ScrollingFrame")
+container.Size = UDim2.new(1, -16, 1, -58)
+container.Position = UDim2.new(0, 8, 0, 52)
+container.BackgroundTransparency = 1
+container.ScrollBarThickness = 3
+container.CanvasSize = UDim2.new(0, 0, 0, 360)
+container.Parent = mainFrame
 
 local layout = Instance.new("UIListLayout")
-layout.Parent = buttonContainer
+layout.Parent = container
 layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 layout.SortOrder = Enum.SortOrder.LayoutOrder
-layout.Padding = UDim.new(0, 8)
+layout.Padding = UDim.new(0, 6)
 
--- Helper Button Generator
-local function makeButton(text, order, callback)
+-- Helper: Create Toggle Button
+local function makeToggle(name, defaultState, callback)
+    local state = defaultState
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.92, 0, 0, 36)
-    btn.BackgroundColor3 = Color3.fromRGB(40, 42, 54)
-    btn.Text = text
-    btn.TextColor3 = Color3.fromRGB(240, 240, 240)
+    btn.Size = UDim2.new(0.96, 0, 0, 36)
+    btn.BackgroundColor3 = state and Color3.fromRGB(50, 168, 82) or Color3.fromRGB(42, 44, 56)
+    btn.Text = name .. ": " .. (state and "ON" or "OFF")
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
     btn.TextSize = 13
     btn.Font = Enum.Font.GothamMedium
-    btn.LayoutOrder = order
-    btn.Parent = buttonContainer
+    btn.Parent = container
 
     local btnCorner = Instance.new("UICorner")
     btnCorner.CornerRadius = UDim.new(0, 6)
     btnCorner.Parent = btn
 
-    btn.MouseButton1Click:Connect(callback)
-    return btn
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        btn.BackgroundColor3 = state and Color3.fromRGB(50, 168, 82) or Color3.fromRGB(42, 44, 56)
+        btn.Text = name .. ": " .. (state and "ON" or "OFF")
+        callback(state)
+    end)
 end
 
--- Feature 1: WalkSpeed Boost
-makeButton("Boost WalkSpeed (35)", 1, function()
-    local char = player.Character or player.CharacterAdded:Wait()
-    local hum = char:FindFirstChildWhichIsA("Humanoid")
-    if hum then
-        hum.WalkSpeed = 35
+-- Register Buttons
+makeToggle("Speed Boost (1000)", false, function(on)
+    speedEnabled = on
+    if not on and character then
+        local hum = character:FindFirstChildWhichIsA("Humanoid")
+        if hum then hum.WalkSpeed = 16 end
     end
 end)
 
--- Feature 2: Super Jump
-makeButton("Super Jump (100)", 2, function()
-    local char = player.Character or player.CharacterAdded:Wait()
-    local hum = char:FindFirstChildWhichIsA("Humanoid")
-    if hum then
-        hum.JumpPower = 100
-    end
+makeToggle("Infinite Jump (10x)", false, function(on)
+    infJumpEnabled = on
 end)
 
--- Feature 3: Auto-Equip Pet Tool
-makeButton("Equip Held Pet", 3, function()
-    local char = player.Character or player.CharacterAdded:Wait()
-    local backpack = player:FindFirstChild("Backpack")
-    if backpack then
-        for _, tool in ipairs(backpack:GetChildren()) do
-            if tool:IsA("Tool") and (string.find(string.lower(tool.Name), "pet") or string.find(string.lower(tool.Name), "ride")) then
-                tool.Parent = char
-                break
-            end
-        end
-    end
+makeToggle("ESP Eggs (Distance / Kg)", false, function(on)
+    espEnabled = on
+    updateESP()
 end)
 
--- Feature 4: Reset Character Speeds
-makeButton("Reset Speed & Jump", 4, function()
-    local char = player.Character or player.CharacterAdded:Wait()
-    local hum = char:FindFirstChildWhichIsA("Humanoid")
-    if hum then
-        hum.WalkSpeed = 16
-        hum.JumpPower = 50
-    end
+makeToggle("Spawn Items Checker (Divine/Eternal)", true, function(on)
+    checkerEnabled = on
 end)
 
-print("[Ride a Pet Hub] Successfully executed. Owned by kevan#9999")
+makeToggle("Auto Steal Eggs", false, function(on)
+    autoStealEnabled = on
+    if on then instantStealEnabled = false end
+end)
+
+makeToggle("Instant Steal Eggs (Teleport)", false, function(on)
+    instantStealEnabled = on
+    if on then autoStealEnabled = false end
+end)
