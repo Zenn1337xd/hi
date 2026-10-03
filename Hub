@@ -1,6 +1,6 @@
 -- =======================================================
 -- Ride a Pet Hub | Owned by kevan#9999
--- Full Automation & ESP Suite for Delta
+-- v3.0 - Clean Stop Loops, Hide/Show Dialog & Rarity Filters
 -- =======================================================
 
 local Players = game:GetService("Players")
@@ -21,19 +21,64 @@ if not hasCoreGui or not targetParent then
     targetParent = player:WaitForChild("PlayerGui")
 end
 
-if targetParent:FindFirstChild("RidePetHub") then
-    targetParent.RidePetHub:Destroy()
+-- Remove old versions if running
+if targetParent:FindFirstChild("RidePetHubRoot") then
+    targetParent.RidePetHubRoot:Destroy()
 end
 
--- State Variables
+-- =======================================================
+-- RARITY DATABASE & SETTINGS
+-- =======================================================
+local EGG_RARITIES = {
+    ["Cherub"] = "Ethereal",
+    ["Black Hole"] = "Ethereal",
+    ["Solaris"] = "Ethereal",
+    ["Void"] = "Ethereal",
+    ["Phoenix"] = "Divine",
+    ["Angelic"] = "Divine",
+    ["Volcanic"] = "Divine",
+    ["Galaxy"] = "Mythic",
+    ["Dragon"] = "Mythic",
+    ["Golden"] = "Legendary",
+    ["Crystal"] = "Legendary",
+    ["Magma"] = "Epic",
+    ["Forest"] = "Rare",
+    ["Desert"] = "Uncommon",
+    ["White"] = "Common"
+}
+
+local function getEggRarity(name)
+    for eggName, rarity in pairs(EGG_RARITIES) do
+        if string.find(string.lower(name), string.lower(eggName)) then
+            return rarity
+        end
+    end
+    -- Fallback checks based on keywords in name
+    local lower = string.lower(name)
+    if string.find(lower, "ethereal") or string.find(lower, "eternal") then return "Ethereal" end
+    if string.find(lower, "divine") then return "Divine" end
+    if string.find(lower, "mythic") then return "Mythic" end
+    if string.find(lower, "legendary") then return "Legendary" end
+    return "Normal"
+end
+
+-- System States
 local speedEnabled = false
 local infJumpEnabled = false
 local espEnabled = false
+local checkerEnabled = true
 local autoStealEnabled = false
 local instantStealEnabled = false
-local checkerEnabled = true
 
--- Utility: Safe Notifications
+-- Steal Filter Modes: 1 = All Eggs, 2 = Legendary+, 3 = Divine & Ethereal Only
+local stealFilterMode = 1
+local filterNames = {"All Eggs", "Legendary+", "Divine / Ethereal Only"}
+
+local currentTween = nil
+local jumpConnection = nil
+local speedConnection = nil
+
+-- Notifications
 local function notify(title, text)
     pcall(function()
         StarterGui:SetCore("SendNotification", {
@@ -47,35 +92,63 @@ end
 notify("Ride a Pet Hub", "Loaded | Owned by kevan#9999")
 
 -- =======================================================
--- CORE FEATURES ENGINE
+-- SYSTEM CONTROLS (CLEAN STOP & START)
 -- =======================================================
 
--- 1. SPEED BOOST (Handles both Character & Pet Mounts)
-RunService.Heartbeat:Connect(function()
-    if speedEnabled and character then
-        local hum = character:FindFirstChildWhichIsA("Humanoid")
-        if hum then
-            hum.WalkSpeed = 1000
-            -- Check if riding a seat / pet vehicle
-            if hum.SeatPart and hum.SeatPart:IsA("VehicleSeat") then
-                hum.SeatPart.MaxSpeed = 1000
-                hum.SeatPart.ThrottleFloat = 1
+-- 1. SPEED BOOST (1000)
+local function setSpeed(enabled)
+    speedEnabled = enabled
+    if speedConnection then
+        speedConnection:Disconnect()
+        speedConnection = nil
+    end
+
+    if enabled then
+        speedConnection = RunService.Heartbeat:Connect(function()
+            if character and character:FindFirstChildWhichIsA("Humanoid") then
+                local hum = character:FindFirstChildWhichIsA("Humanoid")
+                hum.WalkSpeed = 1000
+                if hum.SeatPart and hum.SeatPart:IsA("VehicleSeat") then
+                    hum.SeatPart.MaxSpeed = 1000
+                    hum.SeatPart.ThrottleFloat = 1
+                end
             end
+        end)
+    else
+        -- Clean reset to normal
+        if character and character:FindFirstChildWhichIsA("Humanoid") then
+            character:FindFirstChildWhichIsA("Humanoid").WalkSpeed = 16
         end
     end
-end)
+end
 
 -- 2. INFINITE JUMP
-UserInputService.JumpRequest:Connect(function()
-    if infJumpEnabled and character then
-        local hum = character:FindFirstChildWhichIsA("Humanoid")
-        if hum then
-            hum:ChangeState(Enum.HumanoidStateType.Jumping)
-        end
+local function setInfJump(enabled)
+    infJumpEnabled = enabled
+    if jumpConnection then
+        jumpConnection:Disconnect()
+        jumpConnection = nil
     end
-end)
 
--- Helper: Locate Eggs in Workspace
+    if enabled then
+        jumpConnection = UserInputService.JumpRequest:Connect(function()
+            if character and character:FindFirstChildWhichIsA("Humanoid") then
+                character:FindFirstChildWhichIsA("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end)
+    end
+end
+
+-- 3. EGG SCANNER & ESP
+local espStorage = {}
+
+local function clearESP()
+    for _, tag in ipairs(espStorage) do
+        if tag and tag.Parent then tag:Destroy() end
+    end
+    espStorage = {}
+end
+
 local function getEggs()
     local eggs = {}
     for _, obj in ipairs(workspace:GetDescendants()) do
@@ -89,55 +162,46 @@ local function getEggs()
     return eggs
 end
 
--- 3. ESP FOR EGGS (Name, Distance in meters, Attributes/Kg)
-local espStorage = {}
-
-local function clearESP()
-    for _, v in pairs(espStorage) do
-        if v then v:Destroy() end
-    end
-    espStorage = {}
-end
-
 local function updateESP()
-    if not espEnabled then
-        clearESP()
-        return
-    end
+    clearESP()
+    if not espEnabled then return end
 
     local eggs = getEggs()
     local root = character and character:FindFirstChild("HumanoidRootPart")
 
     for _, egg in ipairs(eggs) do
         local targetPart = egg:IsA("BasePart") and egg or egg:FindFirstChildWhichIsA("BasePart")
-        if targetPart and not targetPart:FindFirstChild("EggTag") then
-            -- Billboard Label
+        if targetPart and not targetPart:FindFirstChild("EggESP") then
+            local rarity = getEggRarity(egg.Name)
+
             local bill = Instance.new("BillboardGui")
-            bill.Name = "EggTag"
-            bill.Size = UDim2.new(0, 150, 0, 45)
+            bill.Name = "EggESP"
+            bill.Size = UDim2.new(0, 160, 0, 50)
             bill.AlwaysOnTop = true
             bill.Adornee = targetPart
 
             local txt = Instance.new("TextLabel")
             txt.Size = UDim2.new(1, 0, 1, 0)
             txt.BackgroundTransparency = 1
-            txt.TextColor3 = Color3.fromRGB(255, 230, 0)
+            txt.TextColor3 = (rarity == "Ethereal" and Color3.fromRGB(255, 60, 60))
+                or (rarity == "Divine" and Color3.fromRGB(255, 215, 0))
+                or (rarity == "Mythic" and Color3.fromRGB(200, 80, 255))
+                or (rarity == "Legendary" and Color3.fromRGB(255, 170, 0))
+                or Color3.fromRGB(255, 255, 255)
             txt.TextStrokeTransparency = 0
             txt.Font = Enum.Font.GothamBold
             txt.TextSize = 11
             txt.Parent = bill
-
             bill.Parent = targetPart
             table.insert(espStorage, bill)
 
-            -- Live distance & stat calculation
             task.spawn(function()
                 while espEnabled and targetPart and targetPart.Parent do
                     if root then
                         local studs = math.floor((root.Position - targetPart.Position).Magnitude)
-                        local meters = math.floor(studs * 0.28) -- 1 stud ≈ 0.28 meters
-                        local kgText = targetPart.Parent:GetAttribute("Weight") or targetPart.Parent:GetAttribute("Kg") or "N/A"
-                        txt.Text = string.format("[%s]\n%dm | %s kg", egg.Name, meters, tostring(kgText))
+                        local meters = math.floor(studs * 0.28)
+                        local weight = egg:GetAttribute("Weight") or egg:GetAttribute("Kg") or "?"
+                        txt.Text = string.format("[%s]\n%s | %dm | %skg", egg.Name, rarity, meters, tostring(weight))
                     end
                     task.wait(0.5)
                 end
@@ -147,19 +211,30 @@ local function updateESP()
     end
 end
 
--- 4. SPAWN CHECKER (Divine / Eternal alerts)
+-- 4. LIVE SPAWN ITEM CHECKER
 workspace.DescendantAdded:Connect(function(descendant)
     if checkerEnabled then
-        local nameLower = string.lower(descendant.Name)
-        if string.find(nameLower, "eternal") or string.find(nameLower, "divine") or string.find(nameLower, "mythic") then
-            notify("Rare Spawn Alert!", descendant.Name .. " has spawned!")
+        local rarity = getEggRarity(descendant.Name)
+        if rarity == "Ethereal" or rarity == "Divine" or rarity == "Mythic" then
+            notify("⭐ Rare Spawn!", descendant.Name .. " (" .. rarity .. ") appeared!")
         end
     end
 end)
 
--- 5. AUTO & INSTANT STEAL
+-- 5. STEAL LOGIC WITH RARITY MATCH
+local function matchesFilter(egg)
+    local rarity = getEggRarity(egg.Name)
+    if stealFilterMode == 1 then
+        return true -- All
+    elseif stealFilterMode == 2 then
+        return (rarity == "Legendary" or rarity == "Mythic" or rarity == "Divine" or rarity == "Ethereal")
+    elseif stealFilterMode == 3 then
+        return (rarity == "Divine" or rarity == "Ethereal")
+    end
+    return true
+end
+
 local function findHomeBase()
-    -- Look for plot or base matching player name
     for _, plot in ipairs(workspace:GetDescendants()) do
         if string.find(string.lower(plot.Name), "base") or string.find(string.lower(plot.Name), "plot") then
             if plot:FindFirstChild(player.Name) or plot:GetAttribute("Owner") == player.Name then
@@ -167,12 +242,11 @@ local function findHomeBase()
             end
         end
     end
-    -- Fallback to spawn point
     local spawn = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
     return spawn and spawn.Position or Vector3.new(0, 5, 0)
 end
 
-local function executeSteal(instant)
+local function runStealCycle(instant)
     local root = character and character:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
@@ -180,106 +254,162 @@ local function executeSteal(instant)
     local eggs = getEggs()
 
     for _, egg in ipairs(eggs) do
-        if not (autoStealEnabled or instantStealEnabled) then break end
-        local eggPart = egg:IsA("BasePart") and egg or egg:FindFirstChildWhichIsA("BasePart")
-        
-        if eggPart then
-            -- Move to egg
-            if instant then
-                root.CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)
-            else
-                local tween = TweenService:Create(root, TweenInfo.new(1.5, Enum.EasingStyle.Linear), {CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)})
-                tween:Play()
-                tween.Completed:Wait()
-            end
+        -- Stop immediately if toggled off
+        if (not autoStealEnabled) and (not instantStealEnabled) then
+            if currentTween then currentTween:Cancel() end
+            break
+        end
 
-            -- Trigger interaction prompt if present
-            local prompt = egg:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if prompt then
-                if fireproximityprompt then
-                    fireproximityprompt(prompt)
+        if matchesFilter(egg) then
+            local eggPart = egg:IsA("BasePart") and egg or egg:FindFirstChildWhichIsA("BasePart")
+            if eggPart and eggPart.Parent then
+                if instant then
+                    root.CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)
                 else
-                    prompt:InputHoldBegin()
-                    task.wait(prompt.HoldDuration + 0.1)
-                    prompt:InputHoldEnd()
+                    currentTween = TweenService:Create(root, TweenInfo.new(1.2, Enum.EasingStyle.Linear), {CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)})
+                    currentTween:Play()
+                    currentTween.Completed:Wait()
                 end
-            end
-            task.wait(0.3)
 
-            -- Return to base with egg
-            if instant then
-                root.CFrame = CFrame.new(homePos + Vector3.new(0, 4, 0))
-            else
-                local returnTween = TweenService:Create(root, TweenInfo.new(1.5, Enum.EasingStyle.Linear), {CFrame = CFrame.new(homePos + Vector3.new(0, 4, 0))})
-                returnTween:Play()
-                returnTween.Completed:Wait()
+                -- Prompt grab
+                local prompt = egg:FindFirstChildWhichIsA("ProximityPrompt", true)
+                if prompt then
+                    if fireproximityprompt then
+                        fireproximityprompt(prompt)
+                    else
+                        prompt:InputHoldBegin()
+                        task.wait(prompt.HoldDuration + 0.1)
+                        prompt:InputHoldEnd()
+                    end
+                end
+                task.wait(0.3)
+
+                -- Return to Base
+                if instant then
+                    root.CFrame = CFrame.new(homePos + Vector3.new(0, 4, 0))
+                else
+                    currentTween = TweenService:Create(root, TweenInfo.new(1.2, Enum.EasingStyle.Linear), {CFrame = CFrame.new(homePos + Vector3.new(0, 4, 0))})
+                    currentTween:Play()
+                    currentTween.Completed:Wait()
+                end
+                task.wait(0.8)
             end
-            task.wait(1)
         end
     end
 end
 
+-- Dedicated Steal Worker
 task.spawn(function()
     while true do
         if instantStealEnabled then
-            executeSteal(true)
+            runStealCycle(true)
         elseif autoStealEnabled then
-            executeSteal(false)
+            runStealCycle(false)
         end
         task.wait(1)
     end
 end)
 
 -- =======================================================
--- USER INTERFACE
+-- USER INTERFACE WITH SHOW/HIDE TOGGLE
 -- =======================================================
 
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "RidePetHub"
+screenGui.Name = "RidePetHubRoot"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = targetParent
 
+-- Floating Open/Close Button (Always accessible)
+local openBtn = Instance.new("TextButton")
+openBtn.Name = "FloatingToggle"
+openBtn.Size = UDim2.new(0, 60, 0, 60)
+openBtn.Position = UDim2.new(0.02, 0, 0.45, 0)
+openBtn.BackgroundColor3 = Color3.fromRGB(35, 38, 52)
+openBtn.Text = "PET\nHUB"
+openBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+openBtn.TextSize = 12
+openBtn.Font = Enum.Font.GothamBold
+openBtn.Active = true
+openBtn.Draggable = true
+openBtn.Parent = screenGui
+
+local openCorner = Instance.new("UICorner")
+openCorner.CornerRadius = UDim.new(1, 0) -- Circular
+openCorner.Parent = openBtn
+
+local openStroke = Instance.new("UIStroke")
+openStroke.Color = Color3.fromRGB(114, 137, 218)
+openStroke.Thickness = 2
+openStroke.Parent = openBtn
+
+-- Main Frame
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 320, 0, 380)
-mainFrame.Position = UDim2.new(0.5, -160, 0.35, -190)
-mainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+mainFrame.Size = UDim2.new(0, 310, 0, 390)
+mainFrame.Position = UDim2.new(0.5, -155, 0.35, -195)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 21, 28)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
 mainFrame.Draggable = true
+mainFrame.Visible = true
 mainFrame.Parent = screenGui
 
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 10)
 corner.Parent = mainFrame
 
--- Title & Owner Header
+-- Floating Toggle click logic
+openBtn.MouseButton1Click:Connect(function()
+    mainFrame.Visible = not mainFrame.Visible
+end)
+
+-- Title & Header
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -45, 0, 20)
+title.Size = UDim2.new(1, -70, 0, 20)
 title.Position = UDim2.new(0, 12, 0, 8)
 title.BackgroundTransparency = 1
-title.Text = "Ride a Pet Hub v2"
+title.Text = "Ride a Pet Hub v3"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.TextSize = 15
+title.TextSize = 14
 title.Font = Enum.Font.GothamBold
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = mainFrame
 
 local ownerTag = Instance.new("TextLabel")
-ownerTag.Size = UDim2.new(1, -45, 0, 16)
-ownerTag.Position = UDim2.new(0, 12, 0, 28)
+ownerTag.Size = UDim2.new(1, -70, 0, 16)
+ownerTag.Position = UDim2.new(0, 12, 0, 26)
 ownerTag.BackgroundTransparency = 1
 ownerTag.Text = "Owned by kevan#9999"
 ownerTag.TextColor3 = Color3.fromRGB(114, 137, 218)
-ownerTag.TextSize = 12
+ownerTag.TextSize = 11
 ownerTag.Font = Enum.Font.GothamMedium
 ownerTag.TextXAlignment = Enum.TextXAlignment.Left
 ownerTag.Parent = mainFrame
 
+-- Minimize Button (Hides Dialog)
+local hideBtn = Instance.new("TextButton")
+hideBtn.Size = UDim2.new(0, 24, 0, 24)
+hideBtn.Position = UDim2.new(1, -56, 0, 8)
+hideBtn.BackgroundColor3 = Color3.fromRGB(60, 64, 80)
+hideBtn.Text = "—"
+hideBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+hideBtn.TextSize = 13
+hideBtn.Font = Enum.Font.GothamBold
+hideBtn.Parent = mainFrame
+
+local hideCorner = Instance.new("UICorner")
+hideCorner.CornerRadius = UDim.new(0, 6)
+hideCorner.Parent = hideBtn
+
+hideBtn.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
+end)
+
+-- Close Button (Hides Dialog)
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0, 24, 0, 24)
-closeBtn.Position = UDim2.new(1, -32, 0, 8)
-closeBtn.BackgroundColor3 = Color3.fromRGB(220, 65, 65)
+closeBtn.Position = UDim2.new(1, -28, 0, 8)
+closeBtn.BackgroundColor3 = Color3.fromRGB(215, 60, 60)
 closeBtn.Text = "X"
 closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 closeBtn.TextSize = 12
@@ -291,16 +421,17 @@ closeCorner.CornerRadius = UDim.new(0, 6)
 closeCorner.Parent = closeBtn
 
 closeBtn.MouseButton1Click:Connect(function()
-    screenGui:Destroy()
+    mainFrame.Visible = false
+    notify("Hub Hidden", "Tap the floating 'PET HUB' button to reopen!")
 end)
 
--- Button Container
+-- Scroll Area
 local container = Instance.new("ScrollingFrame")
-container.Size = UDim2.new(1, -16, 1, -58)
-container.Position = UDim2.new(0, 8, 0, 52)
+container.Size = UDim2.new(1, -16, 1, -55)
+container.Position = UDim2.new(0, 8, 0, 50)
 container.BackgroundTransparency = 1
 container.ScrollBarThickness = 3
-container.CanvasSize = UDim2.new(0, 0, 0, 360)
+container.CanvasSize = UDim2.new(0, 0, 0, 390)
 container.Parent = mainFrame
 
 local layout = Instance.new("UIListLayout")
@@ -309,58 +440,92 @@ layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Padding = UDim.new(0, 6)
 
--- Helper: Create Toggle Button
+-- Helper Button Constructors
 local function makeToggle(name, defaultState, callback)
     local state = defaultState
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.96, 0, 0, 36)
-    btn.BackgroundColor3 = state and Color3.fromRGB(50, 168, 82) or Color3.fromRGB(42, 44, 56)
+    btn.Size = UDim2.new(0.96, 0, 0, 35)
+    btn.BackgroundColor3 = state and Color3.fromRGB(50, 168, 82) or Color3.fromRGB(38, 40, 52)
     btn.Text = name .. ": " .. (state and "ON" or "OFF")
     btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.TextSize = 13
+    btn.TextSize = 12
     btn.Font = Enum.Font.GothamMedium
     btn.Parent = container
 
-    local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 6)
-    btnCorner.Parent = btn
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 6)
+    c.Parent = btn
 
     btn.MouseButton1Click:Connect(function()
         state = not state
-        btn.BackgroundColor3 = state and Color3.fromRGB(50, 168, 82) or Color3.fromRGB(42, 44, 56)
+        btn.BackgroundColor3 = state and Color3.fromRGB(50, 168, 82) or Color3.fromRGB(38, 40, 52)
         btn.Text = name .. ": " .. (state and "ON" or "OFF")
         callback(state)
     end)
+    return btn
 end
 
--- Register Buttons
+-- 1. SPEED BOOST TOGGLE
 makeToggle("Speed Boost (1000)", false, function(on)
-    speedEnabled = on
-    if not on and character then
-        local hum = character:FindFirstChildWhichIsA("Humanoid")
-        if hum then hum.WalkSpeed = 16 end
+    setSpeed(on)
+end)
+
+-- 2. INFINITE JUMP TOGGLE
+makeToggle("Infinite Jump (10x)", false, function(on)
+    setInfJump(on)
+end)
+
+-- 3. ESP TOGGLE
+makeToggle("ESP Eggs (Distance / Rarity / Kg)", false, function(on)
+    espEnabled = on
+    if on then
+        updateESP()
+    else
+        clearESP()
     end
 end)
 
-makeToggle("Infinite Jump (10x)", false, function(on)
-    infJumpEnabled = on
-end)
-
-makeToggle("ESP Eggs (Distance / Kg)", false, function(on)
-    espEnabled = on
-    updateESP()
-end)
-
-makeToggle("Spawn Items Checker (Divine/Eternal)", true, function(on)
+-- 4. CHECKER TOGGLE
+makeToggle("Spawn Item Alert (Rare/Divine)", true, function(on)
     checkerEnabled = on
 end)
 
-makeToggle("Auto Steal Eggs", false, function(on)
-    autoStealEnabled = on
-    if on then instantStealEnabled = false end
+-- 5. RARITY FILTER BUTTON
+local filterBtn = Instance.new("TextButton")
+filterBtn.Size = UDim2.new(0.96, 0, 0, 35)
+filterBtn.BackgroundColor3 = Color3.fromRGB(70, 75, 105)
+filterBtn.Text = "Target Rarity: " .. filterNames[stealFilterMode]
+filterBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+filterBtn.TextSize = 12
+filterBtn.Font = Enum.Font.GothamMedium
+filterBtn.Parent = container
+
+local filterCorner = Instance.new("UICorner")
+filterCorner.CornerRadius = UDim.new(0, 6)
+filterCorner.Parent = filterBtn
+
+filterBtn.MouseButton1Click:Connect(function()
+    stealFilterMode = (stealFilterMode % #filterNames) + 1
+    filterBtn.Text = "Target Rarity: " .. filterNames[stealFilterMode]
+    notify("Target Filter Changed", filterNames[stealFilterMode])
 end)
 
+-- 6. AUTO STEAL TOGGLE
+makeToggle("Auto Steal Eggs", false, function(on)
+    autoStealEnabled = on
+    if on then
+        instantStealEnabled = false
+    else
+        if currentTween then currentTween:Cancel() end
+    end
+end)
+
+-- 7. INSTANT STEAL TOGGLE
 makeToggle("Instant Steal Eggs (Teleport)", false, function(on)
     instantStealEnabled = on
-    if on then autoStealEnabled = false end
+    if on then
+        autoStealEnabled = false
+    else
+        if currentTween then currentTween:Cancel() end
+    end
 end)
