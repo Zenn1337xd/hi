@@ -1,7 +1,7 @@
 -- =======================================================
 -- Kevan Hub | Ride a Pet
 -- Owned by kevan#9999
--- Official Egg Database + Egg Images + Auto-Steal on Spawn
+-- Crash-Proof Ultra-Smooth Engine (Zero Lag on iOS)
 -- =======================================================
 
 local Players = game:GetService("Players")
@@ -18,7 +18,7 @@ player.CharacterAdded:Connect(function(char)
     character = char
 end)
 
--- UI Setup
+-- Safe UI Container
 local targetParent = nil
 local hasCoreGui = pcall(function() targetParent = CoreGui end)
 if not hasCoreGui or not targetParent then
@@ -61,54 +61,52 @@ local function enableFPSBoost()
 end
 
 -- =======================================================
--- OFFICIAL RIDE A PET EGG DATABASE
+-- RARE DATABASE (OFFICIAL EGGS)
 -- =======================================================
-local OFFICIAL_EGGS = {
-    -- Ethereal / Eternal (God Tier)
-    ["cherub"]       = {Name = "Cherub Egg", Tier = "Ethereal [1T]", Rank = 10, Color = Color3.fromRGB(255, 230, 100)},
+local RARE_DATABASE = {
+    ["cherub"]       = {Name = "Cherub Egg", Tier = "Ethereal [1T]", Rank = 10, Color = Color3.fromRGB(255, 220, 80)},
     ["solaris"]      = {Name = "Solaris Egg", Tier = "Ethereal [300B]", Rank = 9, Color = Color3.fromRGB(255, 90, 30)},
-    ["blackhole"]    = {Name = "Black Hole Egg", Tier = "Ethereal [100B]", Rank = 8, Color = Color3.fromRGB(160, 40, 255)},
-    ["black hole"]   = {Name = "Black Hole Egg", Tier = "Ethereal [100B]", Rank = 8, Color = Color3.fromRGB(160, 40, 255)},
-
-    -- Divine / Mythic Tier
-    ["galaxy"]       = {Name = "Galaxy Egg", Tier = "Mythic [1.5B]", Rank = 7, Color = Color3.fromRGB(180, 80, 255)},
-    ["aurora"]       = {Name = "Aurora Egg", Tier = "Divine [300M]", Rank = 6, Color = Color3.fromRGB(0, 220, 255)},
-    ["soul"]         = {Name = "Soul Egg", Tier = "Divine [7M]", Rank = 5, Color = Color3.fromRGB(50, 150, 255)},
-    ["sinister"]     = {Name = "Sinister Egg", Tier = "Mythic [3M]", Rank = 4, Color = Color3.fromRGB(220, 30, 100)},
-    ["flaming"]      = {Name = "Flaming Egg", Tier = "Divine [1M]", Rank = 3, Color = Color3.fromRGB(255, 130, 0)},
-
-    -- Legendary Tier (30K to 700K)
-    ["devilicious"]  = {Name = "Devilicious Egg", Tier = "Legendary [700K]", Rank = 2, Color = Color3.fromRGB(255, 40, 40)},
-    ["skull"]        = {Name = "Skull Egg", Tier = "Legendary [250K]", Rank = 2, Color = Color3.fromRGB(200, 170, 255)},
+    ["blackhole"]    = {Name = "Black Hole Egg", Tier = "Ethereal [100B]", Rank = 8, Color = Color3.fromRGB(170, 40, 255)},
+    ["black hole"]   = {Name = "Black Hole Egg", Tier = "Ethereal [100B]", Rank = 8, Color = Color3.fromRGB(170, 40, 255)},
+    ["galaxy"]       = {Name = "Galaxy Egg", Tier = "Mythic [1.5B]", Rank = 7, Color = Color3.fromRGB(190, 80, 255)},
+    ["aurora"]       = {Name = "Aurora Egg", Tier = "Divine [300M]", Rank = 6, Color = Color3.fromRGB(0, 230, 255)},
+    ["soul"]         = {Name = "Soul Egg", Tier = "Divine [7M]", Rank = 5, Color = Color3.fromRGB(50, 160, 255)},
+    ["sinister"]     = {Name = "Sinister Egg", Tier = "Mythic [3M]", Rank = 4, Color = Color3.fromRGB(230, 30, 100)},
+    ["flaming"]      = {Name = "Flaming Egg", Tier = "Divine [1M]", Rank = 3, Color = Color3.fromRGB(255, 140, 0)},
+    ["devilicious"]  = {Name = "Devilicious Egg", Tier = "Legendary [700K]", Rank = 2, Color = Color3.fromRGB(255, 50, 50)},
+    ["skull"]        = {Name = "Skull Egg", Tier = "Legendary [250K]", Rank = 2, Color = Color3.fromRGB(210, 180, 255)},
     ["crystal"]      = {Name = "Crystal Egg", Tier = "Legendary [150K]", Rank = 1, Color = Color3.fromRGB(0, 240, 240)},
-    ["void"]         = {Name = "Void Egg", Tier = "Legendary [90K]", Rank = 1, Color = Color3.fromRGB(130, 40, 220)},
+    ["void"]         = {Name = "Void Egg", Tier = "Legendary [90K]", Rank = 1, Color = Color3.fromRGB(140, 50, 230)},
     ["golden"]       = {Name = "Golden Egg", Tier = "Legendary [30K]", Rank = 1, Color = Color3.fromRGB(255, 215, 0)}
 }
 
--- Dialogue and prop blacklist
 local BLACKLIST = {
     "wanna see", "world", "shop", "track", "gears", "sell", "food", 
     "index", "rebirth", "eggo", "hatch", "stand", "prompt", "base"
 }
 
-local function isBlacklisted(str)
+local function isIgnored(str)
     local lower = string.lower(str)
     for _, word in ipairs(BLACKLIST) do
-        if string.find(lower, word) then
-            return true
-        end
+        if string.find(lower, word) then return true end
     end
     return false
 end
 
 -- =======================================================
--- LOCATION & BASE PROTECTION
+-- STABILIZE & BASE POSITION
 -- =======================================================
+local cachedRanchPos = nil
+
 local function getMyRanchPosition()
+    if cachedRanchPos then return cachedRanchPos end
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("TextLabel") and string.find(string.lower(obj.Text), "your ranch") then
             local p = obj:FindFirstAncestorWhichIsA("BasePart") or obj.Adornee
-            if p then return p.Position end
+            if p then
+                cachedRanchPos = p.Position
+                return cachedRanchPos
+            end
         end
     end
     local spawn = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
@@ -116,8 +114,7 @@ local function getMyRanchPosition()
 end
 
 local function isInsideMyRanch(pos)
-    local myRanch = getMyRanchPosition()
-    return (pos - myRanch).Magnitude <= 50
+    return (pos - getMyRanchPosition()).Magnitude <= 50
 end
 
 local function stabilize()
@@ -134,123 +131,99 @@ local function stabilize()
 end
 
 -- =======================================================
--- DEEP EGG INSPECTION & IMAGE PARSER
+-- LIGHTWEIGHT ZERO-LAG SCANNER
 -- =======================================================
-local function parseRareEgg(obj, part)
-    if isBlacklisted(obj.Name) then return nil end
+local function checkObjectForRare(obj)
+    if isIgnored(obj.Name) then return nil end
 
-    local matchedEgg = nil
-    local detectedWeight = nil
-    local foundTexture = nil
+    local matched = nil
+    local kgText = nil
 
-    -- 1. Scan ProximityPrompts
-    for _, p in ipairs(obj:GetDescendants()) do
-        if p:IsA("ProximityPrompt") then
-            local pText = (p.ObjectText or "") .. " " .. (p.ActionText or "")
-            if not isBlacklisted(pText) then
-                local pLower = string.lower(pText)
-                for key, data in pairs(OFFICIAL_EGGS) do
-                    if string.find(pLower, key) then
-                        matchedEgg = data
+    -- Check direct name
+    local objLower = string.lower(obj.Name)
+    for key, data in pairs(RARE_DATABASE) do
+        if string.find(objLower, key) then
+            matched = data
+            break
+        end
+    end
+
+    -- Check direct children only (avoids heavy GetDescendants freezes)
+    if not matched then
+        for _, child in ipairs(obj:GetChildren()) do
+            if child:IsA("ProximityPrompt") then
+                local pText = string.lower((child.ObjectText or "") .. " " .. (child.ActionText or ""))
+                for key, data in pairs(RARE_DATABASE) do
+                    if string.find(pText, key) then
+                        matched = data
                         break
                     end
                 end
                 local kg = string.match(pText, "(%d+%.?%d*%s*[kKmMbBtT]*%s*[kK][gG])")
-                if kg then detectedWeight = kg end
-            end
-        end
-    end
-
-    -- 2. Scan TextLabels inside Egg
-    if not matchedEgg then
-        for _, lbl in ipairs(obj:GetDescendants()) do
-            if lbl:IsA("TextLabel") and lbl.Text ~= "" and not isBlacklisted(lbl.Text) then
-                local lower = string.lower(lbl.Text)
-                for key, data in pairs(OFFICIAL_EGGS) do
-                    if string.find(lower, key) then
-                        matchedEgg = data
+                if kg then kgText = kg end
+            elseif child:IsA("TextLabel") then
+                local tLower = string.lower(child.Text)
+                for key, data in pairs(RARE_DATABASE) do
+                    if string.find(tLower, key) then
+                        matched = data
                         break
                     end
                 end
-                local kg = string.match(lbl.Text, "(%d+%.?%d*%s*[kKmMbBtT]*%s*[kK][gG])")
-                if kg then detectedWeight = detectedWeight or kg end
+                local kg = string.match(child.Text, "(%d+%.?%d*%s*[kKmMbBtT]*%s*[kK][gG])")
+                if kg then kgText = kg end
             end
+            if matched then break end
         end
     end
 
-    -- 3. Check Object & Parent Names
-    if not matchedEgg then
-        local objLower = string.lower(obj.Name .. " " .. (obj.Parent and obj.Parent.Name or ""))
-        for key, data in pairs(OFFICIAL_EGGS) do
-            if string.find(objLower, key) then
-                matchedEgg = data
-                break
-            end
-        end
-    end
+    if not matched then return nil end
 
-    -- STRICT: Filter out any common eggs not in the rare database
-    if not matchedEgg then
-        return nil
-    end
+    local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
+    if not part or isInsideMyRanch(part.Position) then return nil end
 
-    -- 4. Locate Egg Image / Texture
-    for _, desc in ipairs(obj:GetDescendants()) do
-        if desc:IsA("Decal") and desc.Texture ~= "" then
-            foundTexture = desc.Texture
-            break
-        elseif desc:IsA("MeshPart") and desc.TextureID ~= "" then
-            foundTexture = desc.TextureID
-            break
-        elseif desc:IsA("SpecialMesh") and desc.TextureId ~= "" then
-            foundTexture = desc.TextureId
-            break
-        end
-    end
-
-    -- Dynamic Weight Calculation
-    local finalWeight = detectedWeight
-    if not finalWeight then
+    if not kgText then
         local size = obj:IsA("Model") and obj:GetExtentsSize() or part.Size
-        local est = math.floor((size.X * size.Y * size.Z) * 8.5)
-        if matchedEgg.Rank >= 3 and est < 1000 then est = est * 1200 end
-        finalWeight = tostring(est > 0 and est or 25) .. " KG"
+        local est = math.floor(size.X * size.Y * size.Z * 8.5)
+        if matched.Rank >= 3 and est < 1000 then est = est * 1200 end
+        kgText = tostring(est > 0 and est or 25) .. " KG"
     end
 
     return {
-        Name = matchedEgg.Name,
-        Tier = matchedEgg.Tier,
-        Color = matchedEgg.Color,
-        Rank = matchedEgg.Rank,
-        Weight = finalWeight,
-        Texture = foundTexture
+        Object = obj,
+        Part = part,
+        Name = matched.Name,
+        Tier = matched.Tier,
+        Color = matched.Color,
+        Rank = matched.Rank,
+        Weight = kgText
     }
 end
 
-local function scanRareMapEggs()
+-- Linear, Throttled Workspace Scan
+local function scanAllRares()
     local results = {}
-    local scanned = {}
+    local seenParts = {}
     local root = character and character:FindFirstChild("HumanoidRootPart")
 
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if not isBlacklisted(obj.Name) then
-            local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
-            if part and not scanned[part] and not isInsideMyRanch(part.Position) then
-                local data = parseRareEgg(obj, part)
-                if data then
-                    scanned[part] = true
-                    local dist = root and math.floor((root.Position - part.Position).Magnitude * 0.28) or 0
-                    table.insert(results, {
-                        Object = obj,
-                        Part = part,
-                        Name = data.Name,
-                        Tier = data.Tier,
-                        Color = data.Color,
-                        Rank = data.Rank,
-                        Weight = data.Weight,
-                        Texture = data.Texture,
-                        Distance = dist
-                    })
+    -- Check direct models and subfolders only
+    for _, item in ipairs(workspace:GetChildren()) do
+        if not isIgnored(item.Name) then
+            local data = checkObjectForRare(item)
+            if data and not seenParts[data.Part] then
+                seenParts[data.Part] = true
+                data.Distance = root and math.floor((root.Position - data.Part.Position).Magnitude * 0.28) or 0
+                table.insert(results, data)
+            end
+
+            -- One level deep for performance
+            if item:IsA("Folder") or item:IsA("Model") then
+                for _, sub in ipairs(item:GetChildren()) do
+                    local subData = checkObjectForRare(sub)
+                    if subData and not seenParts[subData.Part] then
+                        seenParts[subData.Part] = true
+                        subData.Distance = root and math.floor((root.Position - subData.Part.Position).Magnitude * 0.28) or 0
+                        table.insert(results, subData)
+                    end
                 end
             end
         end
@@ -268,7 +241,7 @@ local function scanRareMapEggs()
 end
 
 -- =======================================================
--- SYSTEM CONTROLS & AUTO-STEAL ON SPAWN
+-- SYSTEM CONTROLS & AUTO STEAL
 -- =======================================================
 local speedEnabled = false
 local currentSpeedValue = 500
@@ -286,9 +259,9 @@ local function notify(title, text)
     end)
 end
 
-notify("Kevan Hub", "Welcome back, kevan#9999!")
+notify("Kevan Hub", "Loaded | Smooth Mode")
 
--- Fast 1-Second Steal Action
+-- 1-Second Steal Action
 local function stealEgg(targetData)
     local root = character and character:FindFirstChild("HumanoidRootPart")
     if not root or not targetData.Part or not targetData.Part.Parent then return end
@@ -296,12 +269,12 @@ local function stealEgg(targetData)
     local homePos = getMyRanchPosition()
     stabilize()
 
-    -- 1. Instant Teleport to Rare Egg
+    -- 1. Fast Teleport
     root.CFrame = targetData.Part.CFrame * CFrame.new(0, 3, 0)
     stabilize()
     task.wait(0.1)
 
-    -- 2. Fast Grab Interaction
+    -- 2. Fast Grab
     local prompt = targetData.Object:FindFirstChildWhichIsA("ProximityPrompt", true)
     if prompt then
         if fireproximityprompt then fireproximityprompt(prompt, 0) end
@@ -318,33 +291,28 @@ local function stealEgg(targetData)
     end
     task.wait(0.5)
 
-    -- 3. Return to Ranch Nest
+    -- 3. Return to Ranch
     stabilize()
     root.CFrame = CFrame.new(homePos + Vector3.new(0, 5, 0))
     stabilize()
     notify("Steal Success!", "Delivered " .. targetData.Name .. " to Ranch!")
 end
 
--- Auto-Steal on Spawn Watcher
-task.spawn(function()
-    while true do
-        if autoStealOnSpawn and not isStealing then
-            local eggs = scanRareMapEggs()
-            for _, egg in ipairs(eggs) do
-                if egg.Rank >= 3 and not isInsideMyRanch(egg.Part.Position) then
-                    isStealing = true
-                    stealEgg(egg)
-                    task.wait(1)
-                    isStealing = false
-                    break
-                end
-            end
+-- Auto-Steal on Spawn: Watches for newly spawned rare eggs
+workspace.DescendantAdded:Connect(function(descendant)
+    if autoStealOnSpawn and not isStealing then
+        task.wait(0.1)
+        local data = checkObjectForRare(descendant)
+        if data and data.Rank >= 3 then
+            isStealing = true
+            stealEgg(data)
+            task.wait(1)
+            isStealing = false
         end
-        task.wait(0.5)
     end
 end)
 
--- Continuous Speed Boost
+-- Continuous Speed Loop
 local speedConn
 local function updateSpeed()
     if speedConn then speedConn:Disconnect() speedConn = nil end
@@ -461,7 +429,7 @@ closeBtn.MouseButton1Click:Connect(function()
     notify("Kevan Hub", "Tap 'K' logo to reopen!")
 end)
 
--- Tabs Switcher
+-- Tabs
 local tabFrame = Instance.new("Frame")
 tabFrame.Size = UDim2.new(1, -20, 0, 30)
 tabFrame.Position = UDim2.new(0, 10, 0, 48)
@@ -691,57 +659,19 @@ makeToggle(cheatsScroll, "Infinite Jump (10x)", false, function(on) setInfJump(o
 makeToggle(cheatsScroll, "Auto Steal On Rare Spawn", false, function(on)
     autoStealOnSpawn = on
     if on then
-        notify("Auto-Steal Active", "Monitoring map for high-value egg spawns!")
+        notify("Auto-Steal Active", "Watching for high-tier egg spawns!")
     end
 end)
 
 -- =======================================================
--- TAB 2: RARE EGG RADAR WITH VISUAL EGG PREVIEWS
+-- TAB 2: RARE RADAR (CLEAN ZERO-LAG 2D CARDS)
 -- =======================================================
-local function renderEggVisual(parentFrame, eggData)
-    if eggData.Texture then
-        local img = Instance.new("ImageLabel")
-        img.Size = UDim2.new(0, 38, 0, 38)
-        img.Position = UDim2.new(0, 6, 0.5, -19)
-        img.BackgroundTransparency = 1
-        img.Image = eggData.Texture
-        img.Parent = parentFrame
-        Instance.new("UICorner", img).CornerRadius = UDim.new(0, 6)
-    else
-        -- Clean 3D Viewport preview
-        local vp = Instance.new("ViewportFrame")
-        vp.Size = UDim2.new(0, 38, 0, 38)
-        vp.Position = UDim2.new(0, 6, 0.5, -19)
-        vp.BackgroundTransparency = 1
-        vp.LightColor = Color3.fromRGB(255, 255, 255)
-        vp.Ambient = Color3.fromRGB(200, 200, 200)
-        vp.Parent = parentFrame
-        Instance.new("UICorner", vp).CornerRadius = UDim.new(0, 6)
-
-        pcall(function()
-            local clone = eggData.Part:Clone()
-            clone.CFrame = CFrame.new(0, 0, 0)
-            clone.Anchored = true
-            clone.Parent = vp
-
-            local cam = Instance.new("Camera")
-            cam.Parent = vp
-            vp.CurrentCamera = cam
-
-            local size = clone.Size
-            local maxDim = math.max(size.X, size.Y, size.Z)
-            local dist = maxDim > 0.5 and maxDim * 1.8 or 3
-            cam.CFrame = CFrame.new(Vector3.new(0, size.Y * 0.1, dist), Vector3.new(0, 0, 0))
-        end)
-    end
-end
-
 local function buildRadar()
     for _, child in ipairs(radarScroll:GetChildren()) do
         if not child:IsA("UIListLayout") then child:Destroy() end
     end
 
-    local eggs = scanRareMapEggs()
+    local eggs = scanAllRares()
 
     if #eggs == 0 then
         local empty = Instance.new("TextLabel")
@@ -768,8 +698,21 @@ local function buildRadar()
         stroke.Color = data.Color
         stroke.Thickness = 1.4
 
-        -- Render Egg Image
-        renderEggVisual(card, data)
+        -- Fast 2D Circular Badge with Initial Letter
+        local badge = Instance.new("TextLabel")
+        badge.Size = UDim2.new(0, 36, 0, 36)
+        badge.Position = UDim2.new(0, 6, 0.5, -18)
+        badge.BackgroundColor3 = Color3.fromRGB(18, 19, 26)
+        badge.Text = string.sub(data.Name, 1, 1)
+        badge.TextColor3 = data.Color
+        badge.Font = Enum.Font.FredokaOne
+        badge.TextSize = 18
+        badge.Parent = card
+        Instance.new("UICorner", badge).CornerRadius = UDim.new(1, 0)
+        
+        local bStroke = Instance.new("UIStroke", badge)
+        bStroke.Color = data.Color
+        bStroke.Thickness = 1.2
 
         local lbl = Instance.new("TextLabel")
         lbl.Size = UDim2.new(0.54, 0, 1, 0)
@@ -804,14 +747,15 @@ local function buildRadar()
     end
 end
 
--- Live Auto-Updater for Radar (every 2.5s)
+-- Refresh radar on a safe 4-second interval when visible
 task.spawn(function()
     while true do
         if radarScroll.Visible then
             buildRadar()
         end
-        task.wait(2.5)
+        task.wait(4)
     end
 end)
 
-buildRadar()
+-- Defer initial scan to prevent execution freeze
+task.defer(buildRadar)
