@@ -1,7 +1,7 @@
 -- =======================================================
 -- Kevan Hub | Ride a Pet
 -- Owned by kevan#9999
--- FPS Booster + Strict Wild Spawns + No Crashes
+-- Rarity-First Radar + Real Spawn Name Fix + FPS Boost
 -- =======================================================
 
 local Players = game:GetService("Players")
@@ -30,7 +30,7 @@ if targetParent:FindFirstChild("KevanPetHub") then
 end
 
 -- =======================================================
--- FPS BOOSTER (LOW DROP SYSTEM)
+-- FPS BOOSTER (LOW DROP MODE)
 -- =======================================================
 local function enableFPSBoost()
     Lighting.GlobalShadows = false
@@ -61,55 +61,107 @@ local function enableFPSBoost()
 end
 
 -- =======================================================
--- RARITIES & METRICS
+-- RARITIES DATABASE & TIER WEIGHT
 -- =======================================================
-local EGG_RARITIES = {
-    ["Solaris"] = {Rarity = "Ethereal", Color = Color3.fromRGB(255, 65, 65)},
-    ["Cherub"] = {Rarity = "Ethereal", Color = Color3.fromRGB(255, 75, 120)},
-    ["Blackhole"] = {Rarity = "Ethereal", Color = Color3.fromRGB(180, 50, 255)},
-    ["Void"] = {Rarity = "Ethereal", Color = Color3.fromRGB(150, 40, 240)},
-    ["Phoenix"] = {Rarity = "Divine", Color = Color3.fromRGB(255, 215, 0)},
-    ["Angelic"] = {Rarity = "Divine", Color = Color3.fromRGB(255, 230, 100)},
-    ["Galaxy"] = {Rarity = "Mythic", Color = Color3.fromRGB(170, 70, 255)},
-    ["Shockwave"] = {Rarity = "Mythic", Color = Color3.fromRGB(130, 90, 255)},
-    ["Golden"] = {Rarity = "Legendary", Color = Color3.fromRGB(255, 170, 0)},
-    ["Crystal"] = {Rarity = "Legendary", Color = Color3.fromRGB(0, 210, 255)},
-    ["Magma"] = {Rarity = "Epic", Color = Color3.fromRGB(255, 100, 30)}
+local RARITY_TIERS = {
+    ["Ethereal"]  = {Weight = 6, Color = Color3.fromRGB(255, 65, 65)},
+    ["Divine"]    = {Weight = 5, Color = Color3.fromRGB(255, 215, 0)},
+    ["Mythic"]    = {Weight = 4, Color = Color3.fromRGB(180, 80, 255)},
+    ["Legendary"] = {Weight = 3, Color = Color3.fromRGB(255, 170, 0)},
+    ["Epic"]      = {Weight = 2, Color = Color3.fromRGB(255, 110, 40)},
+    ["Rare"]      = {Weight = 1, Color = Color3.fromRGB(50, 160, 255)},
+    ["Normal"]    = {Weight = 0, Color = Color3.fromRGB(200, 200, 200)}
 }
 
-local function getEggInfo(name)
-    local lower = string.lower(name)
-    for key, data in pairs(EGG_RARITIES) do
-        if string.find(lower, string.lower(key)) then
-            return data.Rarity, data.Color
+local EGG_DATABASE = {
+    ["Cherub"] = "Ethereal",
+    ["Blackhole"] = "Ethereal",
+    ["Solaris"] = "Ethereal",
+    ["Void"] = "Ethereal",
+    ["Phoenix"] = "Divine",
+    ["Angelic"] = "Divine",
+    ["Volcanic"] = "Divine",
+    ["Galaxy"] = "Mythic",
+    ["Shockwave"] = "Mythic",
+    ["Golden"] = "Legendary",
+    ["Crystal"] = "Legendary",
+    ["Magma"] = "Epic",
+    ["Forest"] = "Rare"
+}
+
+-- Identify real egg names and rarities (resolving EggSpawn placeholders)
+local function parseEggDetails(obj)
+    local rawName = obj.Name
+
+    -- 1. Scan TextLabels nested inside (e.g. "Blackhole Egg", "Solaris Egg")
+    for _, desc in ipairs(obj:GetDescendants()) do
+        if desc:IsA("TextLabel") and desc.Text ~= "" then
+            local text = desc.Text
+            if string.find(string.lower(text), "egg") and not string.find(string.lower(text), "skip") then
+                rawName = text
+                break
+            end
         end
     end
-    if string.find(lower, "ethereal") or string.find(lower, "eternal") then return "Ethereal", Color3.fromRGB(255, 65, 65) end
-    if string.find(lower, "divine") then return "Divine", Color3.fromRGB(255, 215, 0) end
-    if string.find(lower, "mythic") then return "Mythic", Color3.fromRGB(170, 70, 255) end
-    if string.find(lower, "legendary") then return "Legendary", Color3.fromRGB(255, 170, 0) end
-    return "Normal", Color3.fromRGB(220, 220, 220)
+
+    -- 2. Scan child models if the parent is an EggSpawn pad
+    if string.lower(rawName) == "eggspawn" or string.lower(rawName) == "spawn" then
+        for _, child in ipairs(obj:GetChildren()) do
+            if child:IsA("Model") or child:IsA("BasePart") then
+                if string.find(string.lower(child.Name), "egg") then
+                    rawName = child.Name
+                    break
+                end
+            end
+        end
+    end
+
+    local cleanName = string.gsub(rawName, "\n.*", "")
+    local lower = string.lower(cleanName)
+    local rarity = "Normal"
+
+    for eggKey, tier in pairs(EGG_DATABASE) do
+        if string.find(lower, string.lower(eggKey)) then
+            rarity = tier
+            break
+        end
+    end
+
+    if rarity == "Normal" then
+        if string.find(lower, "ethereal") or string.find(lower, "eternal") then rarity = "Ethereal"
+        elseif string.find(lower, "divine") then rarity = "Divine"
+        elseif string.find(lower, "mythic") then rarity = "Mythic"
+        elseif string.find(lower, "legendary") then rarity = "Legendary"
+        end
+    end
+
+    local tierData = RARITY_TIERS[rarity] or RARITY_TIERS["Normal"]
+    return cleanName, rarity, tierData.Color, tierData.Weight
 end
 
-local function getEggWeight(eggObj)
+-- Extracts real KG without returning 0 KG
+local function getAccurateKG(eggObj, part)
     for _, desc in ipairs(eggObj:GetDescendants()) do
         if desc:IsA("TextLabel") and desc.Text ~= "" then
             local match = string.match(desc.Text, "(%d+%.?%d*%s*[kKmMbBtT]*%s*[kK][gG])")
             if match then return match end
         end
     end
+
     for _, attr in ipairs({"Weight", "Kg", "KG", "Mass", "Size"}) do
         local val = eggObj:GetAttribute(attr)
-        if val then return tostring(val) .. " KG" end
+        if val and tonumber(val) and tonumber(val) > 0 then return tostring(val) .. " KG" end
     end
-    local size = eggObj:IsA("Model") and eggObj:GetExtentsSize() or (eggObj:IsA("BasePart") and eggObj.Size or Vector3.new(2, 2, 2))
-    return math.floor((size.X * size.Y * size.Z) * 6.5) .. " KG"
+
+    -- Fallback to model bounding box volume
+    local size = eggObj:IsA("Model") and eggObj:GetExtentsSize() or part.Size
+    local est = math.floor((size.X * size.Y * size.Z) * 8.5)
+    return (est > 0 and est or 25) .. " KG"
 end
 
 -- =======================================================
--- STRICT WILD SPAWN SCANNER (IGNORES ALL BASES)
+-- LOCATION & BASE EXCLUSION
 -- =======================================================
-
 local allRanchLocations = {}
 
 local function updateRanchLocations()
@@ -124,9 +176,9 @@ local function updateRanchLocations()
     end
 end
 
-local function isInsideAnyRanch(eggPos)
+local function isInsideAnyRanch(pos)
     for _, ranchPos in ipairs(allRanchLocations) do
-        if (eggPos - ranchPos).Magnitude <= 55 then
+        if (pos - ranchPos).Magnitude <= 55 then
             return true
         end
     end
@@ -157,41 +209,55 @@ local function stabilize()
     end
 end
 
--- Scan strictly for wild eggs, avoiding ALL player plots
-local function scanSpawnedEggsOnly()
-    updateRanchLocations() -- Refresh base map
+-- Scan wild spawns while discarding empty placeholder pads
+local function scanRealSpawnedEggs()
+    updateRanchLocations()
     local results = {}
-    
+
     for _, obj in ipairs(workspace:GetDescendants()) do
         local lower = string.lower(obj.Name)
 
         if (obj:IsA("Model") or obj:IsA("BasePart")) and string.find(lower, "egg") then
+            -- Exclude store shelves, base floorplates, and menus
             if not string.find(lower, "stand") 
                and not string.find(lower, "hatch") 
                and not string.find(lower, "shop") 
                and not string.find(lower, "ui")
                and not string.find(lower, "eggbase")
-               and not string.find(lower, "base")
             then
                 local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
                 if part and not isInsideAnyRanch(part.Position) then
-                    table.insert(results, {
-                        Object = obj,
-                        Part = part,
-                        Name = obj.Name,
-                        Weight = getEggWeight(obj)
-                    })
+                    local name, rarity, color, tierWeight = parseEggDetails(obj)
+                    
+                    -- Avoid empty spawners that hold no active egg
+                    local kg = getAccurateKG(obj, part)
+                    if not (string.lower(name) == "eggspawn" and kg == "0 KG") then
+                        table.insert(results, {
+                            Object = obj,
+                            Part = part,
+                            Name = name,
+                            Rarity = rarity,
+                            Color = color,
+                            TierWeight = tierWeight,
+                            Weight = kg
+                        })
+                    end
                 end
             end
         end
     end
+
+    -- Sort high rarities (Ethereal, Divine, Mythic) to the top of the list
+    table.sort(results, function(a, b)
+        return a.TierWeight > b.TierWeight
+    end)
+
     return results
 end
 
 -- =======================================================
--- SYSTEM CONTROLS
+-- AUTOMATION & STEAL ENGINE
 -- =======================================================
-
 local speedEnabled = false
 local infJumpEnabled = false
 local espEnabled = false
@@ -212,13 +278,13 @@ end
 
 notify("Kevan Hub", "Welcome back, kevan#9999!")
 
--- Fast Steal Loop
+-- Fast 1-Second Steal
 local function doSteal(instant)
     if isStealing then return end
     local root = character and character:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    local targets = scanSpawnedEggsOnly()
+    local targets = scanRealSpawnedEggs()
     if #targets == 0 then return end
 
     isStealing = true
@@ -279,6 +345,7 @@ task.spawn(function()
     end
 end)
 
+-- Speed Boost
 local speedConn
 local function setSpeed(enabled)
     speedEnabled = enabled
@@ -301,6 +368,7 @@ local function setSpeed(enabled)
     end
 end
 
+-- Infinite Jump
 local jumpConn
 local function setInfJump(enabled)
     infJumpEnabled = enabled
@@ -314,10 +382,7 @@ local function setInfJump(enabled)
     end
 end
 
--- =======================================================
--- CRASH-PROOF 2D ESP & UI
--- =======================================================
-
+-- ESP System
 local function clearESP()
     for _, bill in ipairs(activeESP) do
         if bill and bill.Parent then bill:Destroy() end
@@ -329,39 +394,37 @@ local function refreshESP()
     clearESP()
     if not espEnabled then return end
 
-    local targets = scanSpawnedEggsOnly()
+    local targets = scanRealSpawnedEggs()
 
     for _, data in ipairs(targets) do
         local targetPart = data.Part
         if targetPart and not targetPart:FindFirstChild("KevanLagFreeESP") then
-            local rarity, rarityColor = getEggInfo(data.Name)
-
             local bill = Instance.new("BillboardGui")
             bill.Name = "KevanLagFreeESP"
-            bill.Size = UDim2.new(0, 140, 0, 42)
+            bill.Size = UDim2.new(0, 150, 0, 44)
             bill.AlwaysOnTop = true
             bill.Adornee = targetPart
 
             local box = Instance.new("Frame")
             box.Size = UDim2.new(1, 0, 1, 0)
             box.BackgroundColor3 = Color3.fromRGB(15, 17, 24)
-            box.BackgroundTransparency = 0.3
+            box.BackgroundTransparency = 0.25
             box.Parent = bill
             Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
 
             local stroke = Instance.new("UIStroke", box)
-            stroke.Color = rarityColor
+            stroke.Color = data.Color
             stroke.Thickness = 1.5
 
             local txt = Instance.new("TextLabel")
             txt.Size = UDim2.new(1, -6, 1, 0)
             txt.Position = UDim2.new(0, 3, 0, 0)
             txt.BackgroundTransparency = 1
-            txt.TextColor3 = rarityColor
+            txt.TextColor3 = data.Color
             txt.TextStrokeTransparency = 0
             txt.Font = Enum.Font.GothamBold
             txt.TextSize = 10
-            txt.Text = string.format("[WILD SPAWN]\n%s (%s)\n%s", data.Name, rarity, data.Weight)
+            txt.Text = string.format("[%s]\n%s\n%s", data.Rarity, data.Name, data.Weight)
             txt.Parent = box
 
             bill.Parent = targetPart
@@ -377,7 +440,9 @@ task.spawn(function()
     end
 end)
 
--- Main UI
+-- =======================================================
+-- USER INTERFACE
+-- =======================================================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "KevanPetHub"
 screenGui.ResetOnSpawn = false
@@ -548,10 +613,7 @@ local function makeToggle(parent, name, defaultState, callback)
     return btn
 end
 
--- =======================================================
--- TAB 1: AUTOMATIONS
--- =======================================================
-
+-- Tab 1: Cheats
 local homeBtn = Instance.new("TextButton")
 homeBtn.Size = UDim2.new(0.96, 0, 0, 36)
 homeBtn.BackgroundColor3 = Color3.fromRGB(50, 110, 220)
@@ -584,7 +646,7 @@ Instance.new("UICorner", fpsBtn).CornerRadius = UDim.new(0, 6)
 
 fpsBtn.MouseButton1Click:Connect(function()
     enableFPSBoost()
-    notify("FPS Boosted", "Shadows disabled, textures lowered.")
+    notify("FPS Boosted", "Smooth mode activated!")
     fpsBtn.Text = "⚡ FPS Boost Applied"
     fpsBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
 end)
@@ -615,10 +677,7 @@ instantStealBtn = makeToggle(cheatsScroll, "Instant Steal Spawns (TP to Base)", 
     end
 end)
 
--- =======================================================
--- TAB 2: WILD SPAWNS RADAR (LAG-FREE 2D)
--- =======================================================
-
+-- Tab 2: Radar List (Ranked Rarity First)
 local function buildRadar()
     for _, child in ipairs(radarScroll:GetChildren()) do
         if not child:IsA("UIListLayout") then child:Destroy() end
@@ -627,7 +686,7 @@ local function buildRadar()
     local refBtn = Instance.new("TextButton")
     refBtn.Size = UDim2.new(0.96, 0, 0, 30)
     refBtn.BackgroundColor3 = Color3.fromRGB(55, 60, 85)
-    refBtn.Text = "🔄 Scan Wild Spawns Only"
+    refBtn.Text = "🔄 Refresh Wild Spawns"
     refBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     refBtn.Font = Enum.Font.GothamBold
     refBtn.TextSize = 12
@@ -635,14 +694,14 @@ local function buildRadar()
     Instance.new("UICorner", refBtn).CornerRadius = UDim.new(0, 6)
     refBtn.MouseButton1Click:Connect(buildRadar)
 
-    local wildEggs = scanSpawnedEggsOnly()
+    local eggs = scanRealSpawnedEggs()
     local root = character and character:FindFirstChild("HumanoidRootPart")
 
-    if #wildEggs == 0 then
+    if #eggs == 0 then
         local empty = Instance.new("TextLabel")
         empty.Size = UDim2.new(0.96, 0, 0, 40)
         empty.BackgroundTransparency = 1
-        empty.Text = "No wild spawned eggs currently outside ranches."
+        empty.Text = "No wild spawned eggs currently on the map."
         empty.TextColor3 = Color3.fromRGB(180, 180, 180)
         empty.Font = Enum.Font.Gotham
         empty.TextSize = 11
@@ -650,10 +709,9 @@ local function buildRadar()
         return
     end
 
-    radarScroll.CanvasSize = UDim2.new(0, 0, 0, 45 + (#wildEggs * 58))
+    radarScroll.CanvasSize = UDim2.new(0, 0, 0, 45 + (#eggs * 58))
 
-    for _, data in ipairs(wildEggs) do
-        local rarity, rarityColor = getEggInfo(data.Name)
+    for _, data in ipairs(eggs) do
         local dist = root and math.floor((root.Position - data.Part.Position).Magnitude * 0.28) or 0
 
         local card = Instance.new("Frame")
@@ -662,12 +720,16 @@ local function buildRadar()
         card.Parent = radarScroll
         Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
 
+        local stroke = Instance.new("UIStroke", card)
+        stroke.Color = data.Color
+        stroke.Thickness = 1.2
+
         local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(0.65, 0, 1, 0)
+        lbl.Size = UDim2.new(0.68, 0, 1, 0)
         lbl.Position = UDim2.new(0, 8, 0, 0)
         lbl.BackgroundTransparency = 1
-        lbl.Text = data.Name .. "\n" .. rarity .. " | " .. dist .. "m\n" .. data.Weight
-        lbl.TextColor3 = rarityColor
+        lbl.Text = string.format("%s\n%s | %dm\n%s", data.Name, data.Rarity, dist, data.Weight)
+        lbl.TextColor3 = data.Color
         lbl.Font = Enum.Font.GothamBold
         lbl.TextSize = 11
         lbl.TextXAlignment = Enum.TextXAlignment.Left
