@@ -1,7 +1,7 @@
 -- =======================================================
 -- Kevan Hub | Ride a Pet
 -- Owned by kevan#9999
--- Fixed 3D Radar + Unowned Filter + 1s Fast Steal
+-- Crash-Proof Radar + 3D Viewport + Fast 1s Steal
 -- =======================================================
 
 local Players = game:GetService("Players")
@@ -17,7 +17,7 @@ player.CharacterAdded:Connect(function(char)
     character = char
 end)
 
--- Target Parent Setup
+-- UI Setup
 local targetParent = nil
 local hasCoreGui = pcall(function() targetParent = CoreGui end)
 if not hasCoreGui or not targetParent then
@@ -29,7 +29,7 @@ if targetParent:FindFirstChild("KevanPetHub") then
 end
 
 -- =======================================================
--- RARITY & WEIGHT DATABASE
+-- RARITIES & METRICS
 -- =======================================================
 local EGG_RARITIES = {
     ["Solaris"] = {Rarity = "Ethereal", Color = Color3.fromRGB(255, 65, 65)},
@@ -59,39 +59,169 @@ local function getEggInfo(name)
     return "Normal", Color3.fromRGB(220, 220, 220)
 end
 
--- Multi-layered weight detection to prevent "Unknown"
+-- Safe weight detection without throwing errors
 local function getEggWeight(eggObj)
-    -- 1. Check Attributes
-    for _, attr in ipairs({"Weight", "Kg", "KG", "Mass", "Size", "Value"}) do
+    local weightFound = nil
+
+    -- 1. Check TextLabels
+    for _, desc in ipairs(eggObj:GetDescendants()) do
+        if desc:IsA("TextLabel") then
+            local text = desc.Text
+            if string.find(string.upper(text), "KG") then
+                return text
+            end
+        end
+    end
+
+    -- 2. Check Attributes
+    for _, attr in ipairs({"Weight", "Kg", "KG", "Mass", "Size"}) do
         local val = eggObj:GetAttribute(attr)
         if val then return tostring(val) .. " KG" end
     end
-    -- 2. Check ValueObjects
-    for _, child in ipairs(eggObj:GetDescendants()) do
-        if child:IsA("ValueBase") and (string.find(string.lower(child.Name), "weight") or string.find(string.lower(child.Name), "kg")) then
+
+    -- 3. Check Value Objects
+    for _, child in ipairs(eggObj:GetChildren()) do
+        if child:IsA("ValueBase") and string.find(string.lower(child.Name), "kg") then
             return tostring(child.Value) .. " KG"
         end
     end
-    -- 3. Check TextLabels inside Egg BillboardGuis
-    for _, label in ipairs(eggObj:GetDescendants()) do
-        if label:IsA("TextLabel") and label.Text ~= "" then
-            local match = string.match(label.Text, "(%d+%.?%d*%s*[kKmMbBtT]*%s*[kK][gG])")
-            if match then return match end
-        end
-    end
-    -- 4. Calculate accurate mass estimate from physical bounds
+
+    -- 4. Dynamic mass estimate fallback
     local size = eggObj:IsA("Model") and eggObj:GetExtentsSize() or (eggObj:IsA("BasePart") and eggObj.Size or Vector3.new(2, 2, 2))
-    local est = math.floor((size.X * size.Y * size.Z) * 8.5)
-    return est .. " KG"
+    return math.floor((size.X * size.Y * size.Z) * 6.5) .. " KG"
 end
 
--- State variables
+-- =======================================================
+-- LOCATION & SCANNING (CRASH-PROOF)
+-- =======================================================
+
+local function getMyRanchPosition()
+    local success, pos = pcall(function()
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("TextLabel") and string.find(string.lower(v.Text), "your ranch") then
+                local part = v:FindFirstAncestorWhichIsA("BasePart")
+                if part then return part.Position end
+            end
+        end
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if (v:IsA("Model") or v:IsA("Folder")) and string.find(string.lower(v.Name), string.lower(player.Name)) then
+                local part = v:FindFirstChildWhichIsA("BasePart", true)
+                if part then return part.Position end
+            end
+        end
+    end)
+
+    if success and pos then return pos end
+    local spawn = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+    return spawn and spawn.Position or Vector3.new(0, 10, 0)
+end
+
+local function isInsideMyRanch(eggPos)
+    local home = getMyRanchPosition()
+    return (eggPos - home).Magnitude <= 50
+end
+
+local function stabilize()
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        local hrp = character.HumanoidRootPart
+        local hum = character:FindFirstChildWhichIsA("Humanoid")
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        if hum then
+            hum.PlatformStand = false
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end
+end
+
+-- Scan eggs across all workspace models and prompts
+local function scanEggs(onlyUnowned)
+    local results = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        local isEgg = false
+        local lower = string.lower(obj.Name)
+
+        if (obj:IsA("Model") or obj:IsA("BasePart")) and string.find(lower, "egg") then
+            if not string.find(lower, "stand") and not string.find(lower, "hatch") and not string.find(lower, "shop") and not string.find(lower, "ui") then
+                isEgg = true
+            end
+        end
+
+        if isEgg then
+            local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
+            if part then
+                local unownedCheck = not isInsideMyRanch(part.Position)
+                if (not onlyUnowned) or unownedCheck then
+                    table.insert(results, {
+                        Object = obj,
+                        Part = part,
+                        Name = obj.Name,
+                        Weight = getEggWeight(obj)
+                    })
+                end
+            end
+        end
+    end
+    return results
+end
+
+-- =======================================================
+-- 3D VIEWPORT GENERATOR
+-- =======================================================
+
+local function render3D(parentFrame, eggObj, part)
+    pcall(function()
+        local vp = Instance.new("ViewportFrame")
+        vp.Size = UDim2.new(0, 48, 0, 48)
+        vp.Position = UDim2.new(0, 5, 0.5, -24)
+        vp.BackgroundTransparency = 1
+        vp.LightColor = Color3.fromRGB(255, 255, 255)
+        vp.Ambient = Color3.fromRGB(220, 220, 220)
+        vp.Parent = parentFrame
+
+        eggObj.Archivable = true
+        part.Archivable = true
+
+        local clone = eggObj:Clone()
+        if not clone then
+            clone = Instance.new("Model")
+            part:Clone().Parent = clone
+        end
+
+        for _, d in ipairs(clone:GetDescendants()) do
+            if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("BillboardGui") or d:IsA("ProximityPrompt") then
+                d:Destroy()
+            end
+        end
+
+        clone.Parent = vp
+        local cf, size
+        if clone:IsA("Model") then
+            cf, size = clone:GetBoundingBox()
+        else
+            cf = clone.CFrame
+            size = clone.Size
+        end
+
+        local cam = Instance.new("Camera")
+        cam.Parent = vp
+        vp.CurrentCamera = cam
+        local maxDim = math.max(size.X, size.Y, size.Z)
+        local dist = maxDim > 1 and maxDim * 1.8 or 3.5
+        cam.CFrame = CFrame.new(cf.Position + Vector3.new(0, size.Y * 0.2, dist), cf.Position)
+    end)
+end
+
+-- =======================================================
+-- SYSTEM CONTROLS
+-- =======================================================
+
 local speedEnabled = false
 local infJumpEnabled = false
 local espEnabled = false
 local autoStealEnabled = false
 local instantStealEnabled = false
-local isStealingBusy = false
+local isStealing = false
 local espStorage = {}
 
 local function notify(title, text)
@@ -106,112 +236,114 @@ end
 
 notify("Kevan Hub", "Welcome back, kevan#9999!")
 
--- =======================================================
--- LOCATION & UNOWNED FILTER ENGINE
--- =======================================================
+-- Fast 1s Steal Routine
+local function doSteal(instant)
+    if isStealing then return end
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
 
-local function getMyRanchPosition()
-    for _, v in ipairs(workspace:GetDescendants()) do
-        if v:IsA("BillboardGui") or v:IsA("TextLabel") then
-            if string.find(string.lower(tostring(v.Text or "")), "your ranch") then
-                local part = v:FindFirstAncestorWhichIsA("BasePart") or v.Adornee
-                if part then return part.Position end
+    local targets = scanEggs(true)
+    if #targets == 0 then return end
+
+    isStealing = true
+    local home = getMyRanchPosition()
+
+    for _, data in ipairs(targets) do
+        if not (autoStealEnabled or instantStealEnabled) then break end
+        local eggPart = data.Part
+
+        if eggPart and eggPart.Parent and not isInsideMyRanch(eggPart.Position) then
+            stabilize()
+
+            -- Move to egg
+            if instant then
+                root.CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)
+            else
+                local tw = TweenService:Create(root, TweenInfo.new(0.6, Enum.EasingStyle.Linear), {CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)})
+                tw:Play()
+                tw.Completed:Wait()
             end
+            stabilize()
+            task.wait(0.1)
+
+            -- Interact / Grab
+            local prompt = data.Object:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt then
+                if fireproximityprompt then fireproximityprompt(prompt, 0) end
+                prompt:InputHoldBegin()
+                task.wait(0.2)
+                prompt:InputHoldEnd()
+            end
+            if firetouchinterest then
+                pcall(function()
+                    firetouchinterest(root, eggPart, 0)
+                    task.wait(0.05)
+                    firetouchinterest(root, eggPart, 1)
+                end)
+            end
+            task.wait(0.6)
+
+            -- Teleport straight back to Ranch
+            stabilize()
+            root.CFrame = CFrame.new(home + Vector3.new(0, 4, 0))
+            stabilize()
+            task.wait(0.5)
         end
     end
-    for _, v in ipairs(workspace:GetDescendants()) do
-        if string.find(string.lower(v.Name), string.lower(player.Name)) and string.find(string.lower(v.Name), "ranch") then
-            local part = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart")
-            if part then return part.Position end
+
+    stabilize()
+    isStealing = false
+end
+
+task.spawn(function()
+    while true do
+        if instantStealEnabled then
+            doSteal(true)
+        elseif autoStealEnabled then
+            doSteal(false)
         end
+        task.wait(0.5)
     end
-    local spawn = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
-    return spawn and spawn.Position or Vector3.new(0, 10, 0)
-end
+end)
 
-local function isInsideMyRanch(eggPosition)
-    local myRanch = getMyRanchPosition()
-    return (eggPosition - myRanch).Magnitude <= 55
-end
-
-local function stabilizeCharacter()
-    if character and character:FindFirstChild("HumanoidRootPart") then
-        local hrp = character.HumanoidRootPart
-        local hum = character:FindFirstChildWhichIsA("Humanoid")
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        if hum then
-            hum.PlatformStand = false
-            hum:ChangeState(Enum.HumanoidStateType.Running)
-        end
-    end
-end
-
--- Scan exclusively UNOWNED eggs outside your ranch
-local function scanUnownedEggs()
-    local unowned = {}
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if (obj:IsA("Model") or obj:IsA("BasePart")) and string.find(string.lower(obj.Name), "egg") then
-            local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
-            if part and not string.find(string.lower(obj.Name), "stand") and not string.find(string.lower(obj.Name), "hatch") then
-                if not isInsideMyRanch(part.Position) then
-                    table.insert(unowned, {
-                        Object = obj,
-                        Part = part,
-                        Name = obj.Name,
-                        Weight = getEggWeight(obj)
-                    })
+-- Speed Boost
+local speedConn
+local function setSpeed(enabled)
+    speedEnabled = enabled
+    if speedConn then speedConn:Disconnect() speedConn = nil end
+    if enabled then
+        speedConn = RunService.Heartbeat:Connect(function()
+            if character and character:FindFirstChildWhichIsA("Humanoid") then
+                local hum = character:FindFirstChildWhichIsA("Humanoid")
+                hum.WalkSpeed = 1000
+                if hum.SeatPart and hum.SeatPart:IsA("VehicleSeat") then
+                    hum.SeatPart.MaxSpeed = 1000
+                    hum.SeatPart.ThrottleFloat = 1
                 end
             end
-        end
-    end
-    return unowned
-end
-
--- =======================================================
--- 3D VIEWPORT GENERATOR
--- =======================================================
-
-local function render3DEgg(parentFrame, eggObj, part)
-    local vp = Instance.new("ViewportFrame")
-    vp.Size = UDim2.new(0, 48, 0, 48)
-    vp.Position = UDim2.new(0, 5, 0.5, -24)
-    vp.BackgroundTransparency = 1
-    vp.LightColor = Color3.fromRGB(255, 255, 255)
-    vp.Ambient = Color3.fromRGB(220, 220, 220)
-    vp.Parent = parentFrame
-
-    local clone = nil
-    if eggObj:IsA("Model") then
-        clone = eggObj:Clone()
+        end)
     else
-        clone = Instance.new("Model")
-        local p = part:Clone()
-        p.Parent = clone
-    end
-
-    for _, desc in ipairs(clone:GetDescendants()) do
-        if desc:IsA("Script") or desc:IsA("LocalScript") or desc:IsA("BillboardGui") or desc:IsA("ProximityPrompt") then
-            desc:Destroy()
+        if character and character:FindFirstChildWhichIsA("Humanoid") then
+            character:FindFirstChildWhichIsA("Humanoid").WalkSpeed = 16
         end
     end
-
-    clone.Parent = vp
-    local cf, size = clone:GetBoundingBox()
-    local cam = Instance.new("Camera")
-    cam.Parent = vp
-    vp.CurrentCamera = cam
-
-    local dist = math.max(size.X, size.Y, size.Z) * 1.8
-    if dist < 3 then dist = 3.5 end
-    cam.CFrame = CFrame.new(cf.Position + Vector3.new(0, size.Y * 0.2, dist), cf.Position)
-    return vp
 end
 
--- =======================================================
--- UNOWNED ESP SYSTEM
--- =======================================================
+-- Jump
+local jumpConn
+local function setInfJump(enabled)
+    infJumpEnabled = enabled
+    if jumpConn then jumpConn:Disconnect() jumpConn = nil end
+    if enabled then
+        jumpConn = UserInputService.JumpRequest:Connect(function()
+            if character and character:FindFirstChildWhichIsA("Humanoid") then
+                character:FindFirstChildWhichIsA("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end)
+    end
+end
 
+-- ESP System
 local function clearESP()
     for _, tag in ipairs(espStorage) do
         if tag and tag.Parent then tag:Destroy() end
@@ -223,24 +355,24 @@ local function refreshESP()
     clearESP()
     if not espEnabled then return end
 
-    local unownedEggs = scanUnownedEggs()
+    local unowned = scanEggs(true)
     local root = character and character:FindFirstChild("HumanoidRootPart")
 
-    for _, eggData in ipairs(unownedEggs) do
-        local targetPart = eggData.Part
+    for _, data in ipairs(unowned) do
+        local targetPart = data.Part
         if targetPart and not targetPart:FindFirstChild("UnownedEggESP") then
-            local rarity, rarityColor = getEggInfo(eggData.Name)
+            local rarity, rarityColor = getEggInfo(data.Name)
 
             local bill = Instance.new("BillboardGui")
             bill.Name = "UnownedEggESP"
-            bill.Size = UDim2.new(0, 185, 0, 60)
+            bill.Size = UDim2.new(0, 185, 0, 58)
             bill.AlwaysOnTop = true
             bill.Adornee = targetPart
 
             local box = Instance.new("Frame")
             box.Size = UDim2.new(1, 0, 1, 0)
             box.BackgroundColor3 = Color3.fromRGB(18, 19, 26)
-            box.BackgroundTransparency = 0.2
+            box.BackgroundTransparency = 0.25
             box.Parent = bill
             Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
 
@@ -248,9 +380,7 @@ local function refreshESP()
             stroke.Color = rarityColor
             stroke.Thickness = 1.5
 
-            pcall(function()
-                render3DEgg(box, eggData.Object, targetPart)
-            end)
+            render3D(box, data.Object, targetPart)
 
             local txt = Instance.new("TextLabel")
             txt.Size = UDim2.new(1, -58, 1, 0)
@@ -273,128 +403,14 @@ local function refreshESP()
                         break
                     end
                     if root then
-                        local studs = math.floor((root.Position - targetPart.Position).Magnitude)
-                        local meters = math.floor(studs * 0.28)
-                        txt.Text = string.format("[NOT OWNED]\n%s\n%s | %dm\n%s", eggData.Name, rarity, meters, eggData.Weight)
+                        local dist = math.floor((root.Position - targetPart.Position).Magnitude * 0.28)
+                        txt.Text = string.format("[NOT OWNED]\n%s\n%s | %dm\n%s", data.Name, rarity, dist, data.Weight)
                     end
                     task.wait(0.5)
                 end
                 if bill then bill:Destroy() end
             end)
         end
-    end
-end
-
--- =======================================================
--- FAST 1-SECOND STEAL TO BASE
--- =======================================================
-
-local function executeStealCycle(instant)
-    if isStealingBusy then return end
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-
-    local targets = scanUnownedEggs()
-    if #targets == 0 then return end
-
-    isStealingBusy = true
-    local homePos = getMyRanchPosition()
-
-    for _, eggData in ipairs(targets) do
-        if not (autoStealEnabled or instantStealEnabled) then break end
-        local eggPart = eggData.Part
-
-        if eggPart and eggPart.Parent and not isInsideMyRanch(eggPart.Position) then
-            stabilizeCharacter()
-
-            -- 1. Travel to egg
-            if instant then
-                root.CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)
-            else
-                local tween = TweenService:Create(root, TweenInfo.new(0.7, Enum.EasingStyle.Linear), {CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)})
-                tween:Play()
-                tween.Completed:Wait()
-            end
-            stabilizeCharacter()
-            task.wait(0.1)
-
-            -- 2. Fast 1s Proximity Interaction
-            local prompt = eggData.Object:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if prompt then
-                if fireproximityprompt then
-                    fireproximityprompt(prompt, 0)
-                end
-                prompt:InputHoldBegin()
-                task.wait(0.2)
-                prompt:InputHoldEnd()
-            end
-
-            -- Also fire touch interest if the game uses physics touches
-            if firetouchinterest and eggPart then
-                pcall(function()
-                    firetouchinterest(root, eggPart, 0)
-                    task.wait(0.05)
-                    firetouchinterest(root, eggPart, 1)
-                end)
-            end
-            task.wait(0.6)
-
-            -- 3. Snap back to Ranch Nest
-            stabilizeCharacter()
-            root.CFrame = CFrame.new(homePos + Vector3.new(0, 4, 0))
-            stabilizeCharacter()
-            task.wait(0.5)
-        end
-    end
-
-    stabilizeCharacter()
-    isStealingBusy = false
-end
-
-task.spawn(function()
-    while true do
-        if instantStealEnabled then
-            executeStealCycle(true)
-        elseif autoStealEnabled then
-            executeStealCycle(false)
-        end
-        task.wait(0.4)
-    end
-end)
-
--- Character Modifiers
-local speedConn = nil
-local function setSpeed(enabled)
-    speedEnabled = enabled
-    if speedConn then speedConn:Disconnect() speedConn = nil end
-    if enabled then
-        speedConn = RunService.Heartbeat:Connect(function()
-            if character and character:FindFirstChildWhichIsA("Humanoid") then
-                local hum = character:FindFirstChildWhichIsA("Humanoid")
-                hum.WalkSpeed = 1000
-                if hum.SeatPart and hum.SeatPart:IsA("VehicleSeat") then
-                    hum.SeatPart.MaxSpeed = 1000
-                    hum.SeatPart.ThrottleFloat = 1
-                end
-            end
-        end)
-    else
-        if character and character:FindFirstChildWhichIsA("Humanoid") then
-            character:FindFirstChildWhichIsA("Humanoid").WalkSpeed = 16
-        end
-    end
-end
-
-local jumpConn = nil
-local function setInfJump(enabled)
-    infJumpEnabled = enabled
-    if jumpConn then jumpConn:Disconnect() jumpConn = nil end
-    if enabled then
-        jumpConn = UserInputService.JumpRequest:Connect(function()
-            if character and character:FindFirstChildWhichIsA("Humanoid") then
-                character:FindFirstChildWhichIsA("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping)
-            end
-        end)
     end
 end
 
@@ -407,7 +423,7 @@ screenGui.Name = "KevanPetHub"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = targetParent
 
--- Floating 'K' Emblem
+-- Floating 'K' Logo
 local openBtn = Instance.new("TextButton")
 openBtn.Name = "KevanFloatingLogo"
 openBtn.Size = UDim2.new(0, 55, 0, 55)
@@ -426,7 +442,7 @@ local stroke = Instance.new("UIStroke", openBtn)
 stroke.Color = Color3.fromRGB(255, 215, 0)
 stroke.Thickness = 2.5
 
--- Main Container Window
+-- Main Frame
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
 mainFrame.Size = UDim2.new(0, 335, 0, 425)
@@ -481,7 +497,7 @@ closeBtn.MouseButton1Click:Connect(function()
     notify("Kevan Hub", "Tap 'K' logo to reopen!")
 end)
 
--- Tab Switcher
+-- Tabs
 local tabFrame = Instance.new("Frame")
 tabFrame.Size = UDim2.new(1, -20, 0, 30)
 tabFrame.Position = UDim2.new(0, 10, 0, 48)
@@ -502,14 +518,13 @@ local radarTabBtn = Instance.new("TextButton")
 radarTabBtn.Size = UDim2.new(0.48, 0, 1, 0)
 radarTabBtn.Position = UDim2.new(0.52, 0, 0, 0)
 radarTabBtn.BackgroundColor3 = Color3.fromRGB(30, 32, 42)
-radarTabBtn.Text = "Unowned Radar (3D)"
+radarTabBtn.Text = "Egg Radar (3D)"
 radarTabBtn.TextColor3 = Color3.fromRGB(190, 190, 190)
 radarTabBtn.Font = Enum.Font.GothamBold
 radarTabBtn.TextSize = 11
 radarTabBtn.Parent = tabFrame
 Instance.new("UICorner", radarTabBtn).CornerRadius = UDim.new(0, 6)
 
--- Panels
 local cheatsScroll = Instance.new("ScrollingFrame")
 cheatsScroll.Size = UDim2.new(1, -20, 1, -90)
 cheatsScroll.Position = UDim2.new(0, 10, 0, 85)
@@ -537,6 +552,7 @@ radarLayout.Parent = radarScroll
 radarLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 radarLayout.Padding = UDim.new(0, 6)
 
+-- Tab Switching
 cheatsTabBtn.MouseButton1Click:Connect(function()
     cheatsScroll.Visible = true
     radarScroll.Visible = false
@@ -549,30 +565,6 @@ radarTabBtn.MouseButton1Click:Connect(function()
     radarScroll.Visible = true
     radarTabBtn.BackgroundColor3 = Color3.fromRGB(48, 50, 68)
     cheatsTabBtn.BackgroundColor3 = Color3.fromRGB(30, 32, 42)
-end)
-
--- =======================================================
--- TAB 1: CHEATS & AUTOMATIONS
--- =======================================================
-
-local homeBtn = Instance.new("TextButton")
-homeBtn.Size = UDim2.new(0.96, 0, 0, 36)
-homeBtn.BackgroundColor3 = Color3.fromRGB(50, 110, 220)
-homeBtn.Text = "🏠 Teleport to Ranch (Instant)"
-homeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-homeBtn.Font = Enum.Font.GothamBold
-homeBtn.TextSize = 12
-homeBtn.Parent = cheatsScroll
-Instance.new("UICorner", homeBtn).CornerRadius = UDim.new(0, 6)
-
-homeBtn.MouseButton1Click:Connect(function()
-    if character and character:FindFirstChild("HumanoidRootPart") then
-        stabilizeCharacter()
-        local homePos = getMyRanchPosition()
-        character.HumanoidRootPart.CFrame = CFrame.new(homePos + Vector3.new(0, 5, 0))
-        stabilizeCharacter()
-        notify("Ranch", "Teleported safely to your nest!")
-    end
 end)
 
 local function makeToggle(parent, name, defaultState, callback)
@@ -596,22 +588,38 @@ local function makeToggle(parent, name, defaultState, callback)
     return btn
 end
 
-makeToggle(cheatsScroll, "Speed Boost (1000)", false, function(on)
-    setSpeed(on)
+-- =======================================================
+-- TAB 1: AUTOMATIONS
+-- =======================================================
+
+local homeBtn = Instance.new("TextButton")
+homeBtn.Size = UDim2.new(0.96, 0, 0, 36)
+homeBtn.BackgroundColor3 = Color3.fromRGB(50, 110, 220)
+homeBtn.Text = "🏠 Teleport to Ranch (Instant)"
+homeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+homeBtn.Font = Enum.Font.GothamBold
+homeBtn.TextSize = 12
+homeBtn.Parent = cheatsScroll
+Instance.new("UICorner", homeBtn).CornerRadius = UDim.new(0, 6)
+
+homeBtn.MouseButton1Click:Connect(function()
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        stabilize()
+        local homePos = getMyRanchPosition()
+        character.HumanoidRootPart.CFrame = CFrame.new(homePos + Vector3.new(0, 5, 0))
+        stabilize()
+        notify("Ranch", "Teleported safely to your nest!")
+    end
 end)
 
-makeToggle(cheatsScroll, "Infinite Jump (10x)", false, function(on)
-    setInfJump(on)
-end)
-
+makeToggle(cheatsScroll, "Speed Boost (1000)", false, function(on) setSpeed(on) end)
+makeToggle(cheatsScroll, "Infinite Jump (10x)", false, function(on) setInfJump(on) end)
 makeToggle(cheatsScroll, "ESP Unowned Only (3D)", false, function(on)
     espEnabled = on
     if on then refreshESP() else clearESP() end
 end)
 
--- Mutual Exclusion Setup for Steal Buttons
 local autoStealBtn, instantStealBtn
-
 autoStealBtn = makeToggle(cheatsScroll, "Auto Steal Unowned (1s to Base)", false, function(on)
     autoStealEnabled = on
     if on and instantStealEnabled then
@@ -631,12 +639,13 @@ instantStealBtn = makeToggle(cheatsScroll, "Instant Steal Unowned (TP to Base)",
 end)
 
 -- =======================================================
--- TAB 2: UNOWNED RADAR LIST (WITH 3D VIEWPORT)
+-- TAB 2: CRASH-PROOF RADAR
 -- =======================================================
 
 local function buildRadar()
+    -- Clear previous items except layout
     for _, child in ipairs(radarScroll:GetChildren()) do
-        if child:IsA("Frame") or child:IsA("TextButton") then
+        if not child:IsA("UIListLayout") then
             child:Destroy()
         end
     end
@@ -644,7 +653,7 @@ local function buildRadar()
     local refBtn = Instance.new("TextButton")
     refBtn.Size = UDim2.new(0.96, 0, 0, 30)
     refBtn.BackgroundColor3 = Color3.fromRGB(55, 60, 85)
-    refBtn.Text = "🔄 Refresh Unowned Eggs"
+    refBtn.Text = "🔄 Refresh Eggs List"
     refBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     refBtn.Font = Enum.Font.GothamBold
     refBtn.TextSize = 12
@@ -652,14 +661,14 @@ local function buildRadar()
     Instance.new("UICorner", refBtn).CornerRadius = UDim.new(0, 6)
     refBtn.MouseButton1Click:Connect(buildRadar)
 
-    local unowned = scanUnownedEggs()
+    local eggs = scanEggs(false) -- scan all eggs so radar is never empty
     local root = character and character:FindFirstChild("HumanoidRootPart")
 
-    if #unowned == 0 then
+    if #eggs == 0 then
         local empty = Instance.new("TextLabel")
         empty.Size = UDim2.new(0.96, 0, 0, 40)
         empty.BackgroundTransparency = 1
-        empty.Text = "No stealable unowned eggs in map range."
+        empty.Text = "Scanning... No eggs currently detected in workspace."
         empty.TextColor3 = Color3.fromRGB(180, 180, 180)
         empty.Font = Enum.Font.Gotham
         empty.TextSize = 11
@@ -667,11 +676,12 @@ local function buildRadar()
         return
     end
 
-    radarScroll.CanvasSize = UDim2.new(0, 0, 0, 40 + (#unowned * 56))
+    radarScroll.CanvasSize = UDim2.new(0, 0, 0, 45 + (#eggs * 58))
 
-    for _, data in ipairs(unowned) do
+    for _, data in ipairs(eggs) do
         local rarity, rarityColor = getEggInfo(data.Name)
         local dist = root and math.floor((root.Position - data.Part.Position).Magnitude * 0.28) or 0
+        local isUnowned = not isInsideMyRanch(data.Part.Position)
 
         local card = Instance.new("Frame")
         card.Size = UDim2.new(0.96, 0, 0, 52)
@@ -679,16 +689,14 @@ local function buildRadar()
         card.Parent = radarScroll
         Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
 
-        -- 3D Egg Preview Icon
-        pcall(function()
-            render3DEgg(card, data.Object, data.Part)
-        end)
+        -- 3D Viewport preview
+        render3D(card, data.Object, data.Part)
 
         local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(0.55, 0, 1, 0)
+        lbl.Size = UDim2.new(0.54, 0, 1, 0)
         lbl.Position = UDim2.new(0, 56, 0, 0)
         lbl.BackgroundTransparency = 1
-        lbl.Text = data.Name .. "\n" .. rarity .. " | " .. dist .. "m\n" .. data.Weight
+        lbl.Text = data.Name .. (isUnowned and " [STEALABLE]" or " [YOUR RANCH]") .. "\n" .. rarity .. " | " .. dist .. "m\n" .. data.Weight
         lbl.TextColor3 = rarityColor
         lbl.Font = Enum.Font.GothamBold
         lbl.TextSize = 10
@@ -698,7 +706,7 @@ local function buildRadar()
         local tpBtn = Instance.new("TextButton")
         tpBtn.Size = UDim2.new(0.24, 0, 0, 30)
         tpBtn.Position = UDim2.new(0.74, 0, 0.2, 0)
-        tpBtn.BackgroundColor3 = Color3.fromRGB(70, 75, 110)
+        tpBtn.BackgroundColor3 = isUnowned and Color3.fromRGB(70, 75, 110) or Color3.fromRGB(45, 48, 60)
         tpBtn.Text = "TP"
         tpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
         tpBtn.Font = Enum.Font.GothamBold
@@ -708,9 +716,9 @@ local function buildRadar()
 
         tpBtn.MouseButton1Click:Connect(function()
             if character and character:FindFirstChild("HumanoidRootPart") and data.Part and data.Part.Parent then
-                stabilizeCharacter()
+                stabilize()
                 character.HumanoidRootPart.CFrame = data.Part.CFrame * CFrame.new(0, 4, 0)
-                stabilizeCharacter()
+                stabilize()
                 notify("Teleported", "Arrived at " .. data.Name)
             end
         end)
