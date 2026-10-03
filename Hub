@@ -1,7 +1,7 @@
 -- =======================================================
 -- Kevan Hub | Ride a Pet
 -- Owned by kevan#9999
--- 100% Strict Rare-Only (Divine / Ethereal) + Speed Slider
+-- Official Egg Database + Egg Images + Auto-Steal on Spawn
 -- =======================================================
 
 local Players = game:GetService("Players")
@@ -18,7 +18,7 @@ player.CharacterAdded:Connect(function(char)
     character = char
 end)
 
--- UI Parent Setup
+-- UI Setup
 local targetParent = nil
 local hasCoreGui = pcall(function() targetParent = CoreGui end)
 if not hasCoreGui or not targetParent then
@@ -61,126 +61,48 @@ local function enableFPSBoost()
 end
 
 -- =======================================================
--- STRICT RARE-ONLY DATABASE (DIVINE & ETHEREAL ONLY)
+-- OFFICIAL RIDE A PET EGG DATABASE
 -- =======================================================
-local STRICT_RARES = {
-    ["blackhole"]  = {Name = "Blackhole Egg", Rarity = "Ethereal", Color = Color3.fromRGB(180, 50, 255), Rank = 7, Icon = "rbxassetid://10888371239"},
-    ["black hole"] = {Name = "Blackhole Egg", Rarity = "Ethereal", Color = Color3.fromRGB(180, 50, 255), Rank = 7, Icon = "rbxassetid://10888371239"},
-    ["cherub"]     = {Name = "Cherub Egg", Rarity = "Ethereal", Color = Color3.fromRGB(255, 75, 120), Rank = 7, Icon = "rbxassetid://7072725342"},
-    ["solaris"]    = {Name = "Solaris Egg", Rarity = "Ethereal", Color = Color3.fromRGB(255, 65, 65), Rank = 7, Icon = "rbxassetid://10888371239"},
-    ["void"]       = {Name = "Void Egg", Rarity = "Ethereal", Color = Color3.fromRGB(150, 40, 240), Rank = 7, Icon = "rbxassetid://10888371239"},
-    ["volcan"]     = {Name = "Volcano Egg", Rarity = "Divine", Color = Color3.fromRGB(255, 100, 20), Rank = 6, Icon = "rbxassetid://10888371239"},
-    ["volcano"]    = {Name = "Volcano Egg", Rarity = "Divine", Color = Color3.fromRGB(255, 100, 20), Rank = 6, Icon = "rbxassetid://10888371239"},
-    ["phoenix"]    = {Name = "Phoenix Egg", Rarity = "Divine", Color = Color3.fromRGB(255, 215, 0), Rank = 6, Icon = "rbxassetid://7072725342"},
-    ["angelic"]    = {Name = "Angelic Egg", Rarity = "Divine", Color = Color3.fromRGB(255, 230, 100), Rank = 6, Icon = "rbxassetid://7072725342"}
+local OFFICIAL_EGGS = {
+    -- Ethereal / Eternal (God Tier)
+    ["cherub"]       = {Name = "Cherub Egg", Tier = "Ethereal [1T]", Rank = 10, Color = Color3.fromRGB(255, 230, 100)},
+    ["solaris"]      = {Name = "Solaris Egg", Tier = "Ethereal [300B]", Rank = 9, Color = Color3.fromRGB(255, 90, 30)},
+    ["blackhole"]    = {Name = "Black Hole Egg", Tier = "Ethereal [100B]", Rank = 8, Color = Color3.fromRGB(160, 40, 255)},
+    ["black hole"]   = {Name = "Black Hole Egg", Tier = "Ethereal [100B]", Rank = 8, Color = Color3.fromRGB(160, 40, 255)},
+
+    -- Divine / Mythic Tier
+    ["galaxy"]       = {Name = "Galaxy Egg", Tier = "Mythic [1.5B]", Rank = 7, Color = Color3.fromRGB(180, 80, 255)},
+    ["aurora"]       = {Name = "Aurora Egg", Tier = "Divine [300M]", Rank = 6, Color = Color3.fromRGB(0, 220, 255)},
+    ["soul"]         = {Name = "Soul Egg", Tier = "Divine [7M]", Rank = 5, Color = Color3.fromRGB(50, 150, 255)},
+    ["sinister"]     = {Name = "Sinister Egg", Tier = "Mythic [3M]", Rank = 4, Color = Color3.fromRGB(220, 30, 100)},
+    ["flaming"]      = {Name = "Flaming Egg", Tier = "Divine [1M]", Rank = 3, Color = Color3.fromRGB(255, 130, 0)},
+
+    -- Legendary Tier (30K to 700K)
+    ["devilicious"]  = {Name = "Devilicious Egg", Tier = "Legendary [700K]", Rank = 2, Color = Color3.fromRGB(255, 40, 40)},
+    ["skull"]        = {Name = "Skull Egg", Tier = "Legendary [250K]", Rank = 2, Color = Color3.fromRGB(200, 170, 255)},
+    ["crystal"]      = {Name = "Crystal Egg", Tier = "Legendary [150K]", Rank = 1, Color = Color3.fromRGB(0, 240, 240)},
+    ["void"]         = {Name = "Void Egg", Tier = "Legendary [90K]", Rank = 1, Color = Color3.fromRGB(130, 40, 220)},
+    ["golden"]       = {Name = "Golden Egg", Tier = "Legendary [30K]", Rank = 1, Color = Color3.fromRGB(255, 215, 0)}
 }
 
-local function getEggImage(eggObj, fallbackIcon)
-    for _, desc in ipairs(eggObj:GetDescendants()) do
-        if desc:IsA("Decal") and desc.Texture ~= "" then
-            return desc.Texture
-        elseif desc:IsA("MeshPart") and desc.TextureID ~= "" then
-            return desc.TextureID
-        elseif desc:IsA("SpecialMesh") and desc.TextureId ~= "" then
-            return desc.TextureId
+-- Dialogue and prop blacklist
+local BLACKLIST = {
+    "wanna see", "world", "shop", "track", "gears", "sell", "food", 
+    "index", "rebirth", "eggo", "hatch", "stand", "prompt", "base"
+}
+
+local function isBlacklisted(str)
+    local lower = string.lower(str)
+    for _, word in ipairs(BLACKLIST) do
+        if string.find(lower, word) then
+            return true
         end
     end
-    return fallbackIcon
-end
-
--- Deep Inspector: STRICTLY isolates Divine and Ethereal/Eternal Eggs
-local function checkRareEgg(obj, part)
-    local detectedData = nil
-    local foundWeight = nil
-
-    -- 1. Scan ProximityPrompts
-    for _, prompt in ipairs(obj:GetDescendants()) do
-        if prompt:IsA("ProximityPrompt") then
-            local pText = string.lower((prompt.ObjectText or "") .. " " .. (prompt.ActionText or ""))
-            for key, data in pairs(STRICT_RARES) do
-                if string.find(pText, key) then
-                    detectedData = data
-                    break
-                end
-            end
-            local kg = string.match(pText, "(%d+%.?%d*%s*[kKmMbBtT]*%s*[kK][gG])")
-            if kg then foundWeight = kg end
-        end
-    end
-
-    -- 2. Scan Attributes
-    if not detectedData then
-        for k, v in pairs(obj:GetAttributes()) do
-            local combined = string.lower(tostring(k) .. " " .. tostring(v))
-            for key, data in pairs(STRICT_RARES) do
-                if string.find(combined, key) then
-                    detectedData = data
-                    break
-                end
-            end
-        end
-    end
-
-    -- 3. Scan TextLabels and Descendants
-    if not detectedData then
-        for _, desc in ipairs(obj:GetDescendants()) do
-            local lower = string.lower(desc.Name)
-            for key, data in pairs(STRICT_RARES) do
-                if string.find(lower, key) then
-                    detectedData = data
-                    break
-                end
-            end
-            if desc:IsA("TextLabel") and desc.Text ~= "" then
-                local tLower = string.lower(desc.Text)
-                for key, data in pairs(STRICT_RARES) do
-                    if string.find(tLower, key) then
-                        detectedData = data
-                        break
-                    end
-                end
-                local kg = string.match(desc.Text, "(%d+%.?%d*%s*[kKmMbBtT]*%s*[kK][gG])")
-                if kg then foundWeight = kg end
-            end
-        end
-    end
-
-    -- 4. Check Container Name
-    if not detectedData then
-        local objLower = string.lower(obj.Name .. " " .. (obj.Parent and obj.Parent.Name or ""))
-        for key, data in pairs(STRICT_RARES) do
-            if string.find(objLower, key) then
-                detectedData = data
-                break
-            end
-        end
-    end
-
-    -- STRICT RULE: If it's not Divine or Ethereal, DROP IT
-    if not detectedData then
-        return nil
-    end
-
-    local finalWeight = foundWeight
-    if not finalWeight then
-        local size = obj:IsA("Model") and obj:GetExtentsSize() or part.Size
-        local est = math.floor((size.X * size.Y * size.Z) * 8.5)
-        if est < 1000 then est = est * 1200 end
-        finalWeight = tostring(est) .. " KG"
-    end
-
-    return {
-        Name = detectedData.Name,
-        Rarity = detectedData.Rarity,
-        Color = detectedData.Color,
-        Rank = detectedData.Rank,
-        Weight = finalWeight,
-        Image = getEggImage(obj, detectedData.Icon)
-    }
+    return false
 end
 
 -- =======================================================
--- LOCATION & BASE EXCLUSION
+-- LOCATION & BASE PROTECTION
 -- =======================================================
 local function getMyRanchPosition()
     for _, obj in ipairs(workspace:GetDescendants()) do
@@ -211,30 +133,122 @@ local function stabilize()
     end
 end
 
-local function scanStrictRares()
+-- =======================================================
+-- DEEP EGG INSPECTION & IMAGE PARSER
+-- =======================================================
+local function parseRareEgg(obj, part)
+    if isBlacklisted(obj.Name) then return nil end
+
+    local matchedEgg = nil
+    local detectedWeight = nil
+    local foundTexture = nil
+
+    -- 1. Scan ProximityPrompts
+    for _, p in ipairs(obj:GetDescendants()) do
+        if p:IsA("ProximityPrompt") then
+            local pText = (p.ObjectText or "") .. " " .. (p.ActionText or "")
+            if not isBlacklisted(pText) then
+                local pLower = string.lower(pText)
+                for key, data in pairs(OFFICIAL_EGGS) do
+                    if string.find(pLower, key) then
+                        matchedEgg = data
+                        break
+                    end
+                end
+                local kg = string.match(pText, "(%d+%.?%d*%s*[kKmMbBtT]*%s*[kK][gG])")
+                if kg then detectedWeight = kg end
+            end
+        end
+    end
+
+    -- 2. Scan TextLabels inside Egg
+    if not matchedEgg then
+        for _, lbl in ipairs(obj:GetDescendants()) do
+            if lbl:IsA("TextLabel") and lbl.Text ~= "" and not isBlacklisted(lbl.Text) then
+                local lower = string.lower(lbl.Text)
+                for key, data in pairs(OFFICIAL_EGGS) do
+                    if string.find(lower, key) then
+                        matchedEgg = data
+                        break
+                    end
+                end
+                local kg = string.match(lbl.Text, "(%d+%.?%d*%s*[kKmMbBtT]*%s*[kK][gG])")
+                if kg then detectedWeight = detectedWeight or kg end
+            end
+        end
+    end
+
+    -- 3. Check Object & Parent Names
+    if not matchedEgg then
+        local objLower = string.lower(obj.Name .. " " .. (obj.Parent and obj.Parent.Name or ""))
+        for key, data in pairs(OFFICIAL_EGGS) do
+            if string.find(objLower, key) then
+                matchedEgg = data
+                break
+            end
+        end
+    end
+
+    -- STRICT: Filter out any common eggs not in the rare database
+    if not matchedEgg then
+        return nil
+    end
+
+    -- 4. Locate Egg Image / Texture
+    for _, desc in ipairs(obj:GetDescendants()) do
+        if desc:IsA("Decal") and desc.Texture ~= "" then
+            foundTexture = desc.Texture
+            break
+        elseif desc:IsA("MeshPart") and desc.TextureID ~= "" then
+            foundTexture = desc.TextureID
+            break
+        elseif desc:IsA("SpecialMesh") and desc.TextureId ~= "" then
+            foundTexture = desc.TextureId
+            break
+        end
+    end
+
+    -- Dynamic Weight Calculation
+    local finalWeight = detectedWeight
+    if not finalWeight then
+        local size = obj:IsA("Model") and obj:GetExtentsSize() or part.Size
+        local est = math.floor((size.X * size.Y * size.Z) * 8.5)
+        if matchedEgg.Rank >= 3 and est < 1000 then est = est * 1200 end
+        finalWeight = tostring(est > 0 and est or 25) .. " KG"
+    end
+
+    return {
+        Name = matchedEgg.Name,
+        Tier = matchedEgg.Tier,
+        Color = matchedEgg.Color,
+        Rank = matchedEgg.Rank,
+        Weight = finalWeight,
+        Texture = foundTexture
+    }
+end
+
+local function scanRareMapEggs()
     local results = {}
-    local scannedParts = {}
+    local scanned = {}
     local root = character and character:FindFirstChild("HumanoidRootPart")
 
     for _, obj in ipairs(workspace:GetDescendants()) do
-        local lower = string.lower(obj.Name)
-
-        if not string.find(lower, "stand") and not string.find(lower, "hatch") and not string.find(lower, "shop") and not string.find(lower, "eggbase") then
+        if not isBlacklisted(obj.Name) then
             local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
-            if part and not scannedParts[part] and not isInsideMyRanch(part.Position) then
-                local rareInfo = checkRareEgg(obj, part)
-                if rareInfo then
-                    scannedParts[part] = true
+            if part and not scanned[part] and not isInsideMyRanch(part.Position) then
+                local data = parseRareEgg(obj, part)
+                if data then
+                    scanned[part] = true
                     local dist = root and math.floor((root.Position - part.Position).Magnitude * 0.28) or 0
                     table.insert(results, {
                         Object = obj,
                         Part = part,
-                        Name = rareInfo.Name,
-                        Rarity = rareInfo.Rarity,
-                        Color = rareInfo.Color,
-                        Rank = rareInfo.Rank,
-                        Weight = rareInfo.Weight,
-                        Image = rareInfo.Image,
+                        Name = data.Name,
+                        Tier = data.Tier,
+                        Color = data.Color,
+                        Rank = data.Rank,
+                        Weight = data.Weight,
+                        Texture = data.Texture,
                         Distance = dist
                     })
                 end
@@ -254,16 +268,13 @@ local function scanStrictRares()
 end
 
 -- =======================================================
--- SYSTEM CONTROLS & SPEED ENGINE
+-- SYSTEM CONTROLS & AUTO-STEAL ON SPAWN
 -- =======================================================
 local speedEnabled = false
 local currentSpeedValue = 500
 local infJumpEnabled = false
-local espEnabled = false
-local autoStealEnabled = false
-local instantStealEnabled = false
+local autoStealOnSpawn = false
 local isStealing = false
-local activeESP = {}
 
 local function notify(title, text)
     pcall(function()
@@ -277,74 +288,63 @@ end
 
 notify("Kevan Hub", "Welcome back, kevan#9999!")
 
--- Fast Steal (Exclusively targets Divine & Ethereal)
-local function doSteal(instant)
-    if isStealing then return end
+-- Fast 1-Second Steal Action
+local function stealEgg(targetData)
     local root = character and character:FindFirstChild("HumanoidRootPart")
-    if not root then return end
+    if not root or not targetData.Part or not targetData.Part.Parent then return end
 
-    local targets = scanStrictRares()
-    if #targets == 0 then return end
-
-    isStealing = true
-    local home = getMyRanchPosition()
-
-    for _, data in ipairs(targets) do
-        if not (autoStealEnabled or instantStealEnabled) then break end
-        local eggPart = data.Part
-
-        if eggPart and eggPart.Parent and not isInsideMyRanch(eggPart.Position) then
-            stabilize()
-
-            if instant then
-                root.CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)
-            else
-                local tw = TweenService:Create(root, TweenInfo.new(0.6, Enum.EasingStyle.Linear), {CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)})
-                tw:Play()
-                tw.Completed:Wait()
-            end
-            stabilize()
-            task.wait(0.1)
-
-            local prompt = data.Object:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if prompt then
-                if fireproximityprompt then fireproximityprompt(prompt, 0) end
-                prompt:InputHoldBegin()
-                task.wait(0.2)
-                prompt:InputHoldEnd()
-            end
-            if firetouchinterest then
-                pcall(function()
-                    firetouchinterest(root, eggPart, 0)
-                    task.wait(0.05)
-                    firetouchinterest(root, eggPart, 1)
-                end)
-            end
-            task.wait(0.6)
-
-            stabilize()
-            root.CFrame = CFrame.new(home + Vector3.new(0, 4, 0))
-            stabilize()
-            task.wait(0.5)
-        end
-    end
-
+    local homePos = getMyRanchPosition()
     stabilize()
-    isStealing = false
+
+    -- 1. Instant Teleport to Rare Egg
+    root.CFrame = targetData.Part.CFrame * CFrame.new(0, 3, 0)
+    stabilize()
+    task.wait(0.1)
+
+    -- 2. Fast Grab Interaction
+    local prompt = targetData.Object:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then
+        if fireproximityprompt then fireproximityprompt(prompt, 0) end
+        prompt:InputHoldBegin()
+        task.wait(0.2)
+        prompt:InputHoldEnd()
+    end
+    if firetouchinterest then
+        pcall(function()
+            firetouchinterest(root, targetData.Part, 0)
+            task.wait(0.05)
+            firetouchinterest(root, targetData.Part, 1)
+        end)
+    end
+    task.wait(0.5)
+
+    -- 3. Return to Ranch Nest
+    stabilize()
+    root.CFrame = CFrame.new(homePos + Vector3.new(0, 5, 0))
+    stabilize()
+    notify("Steal Success!", "Delivered " .. targetData.Name .. " to Ranch!")
 end
 
+-- Auto-Steal on Spawn Watcher
 task.spawn(function()
     while true do
-        if instantStealEnabled then
-            doSteal(true)
-        elseif autoStealEnabled then
-            doSteal(false)
+        if autoStealOnSpawn and not isStealing then
+            local eggs = scanRareMapEggs()
+            for _, egg in ipairs(eggs) do
+                if egg.Rank >= 3 and not isInsideMyRanch(egg.Part.Position) then
+                    isStealing = true
+                    stealEgg(egg)
+                    task.wait(1)
+                    isStealing = false
+                    break
+                end
+            end
         end
         task.wait(0.5)
     end
 end)
 
--- Continuous Speed Loop
+-- Continuous Speed Boost
 local speedConn
 local function updateSpeed()
     if speedConn then speedConn:Disconnect() speedConn = nil end
@@ -378,74 +378,6 @@ local function setInfJump(enabled)
         end)
     end
 end
-
--- ESP System (Divine & Ethereal Only)
-local function clearESP()
-    for _, bill in ipairs(activeESP) do
-        if bill and bill.Parent then bill:Destroy() end
-    end
-    activeESP = {}
-end
-
-local function refreshESP()
-    clearESP()
-    if not espEnabled then return end
-
-    local targets = scanStrictRares()
-
-    for _, data in ipairs(targets) do
-        local targetPart = data.Part
-        if targetPart and not targetPart:FindFirstChild("KevanLagFreeESP") then
-            local bill = Instance.new("BillboardGui")
-            bill.Name = "KevanLagFreeESP"
-            bill.Size = UDim2.new(0, 175, 0, 50)
-            bill.AlwaysOnTop = true
-            bill.Adornee = targetPart
-
-            local box = Instance.new("Frame")
-            box.Size = UDim2.new(1, 0, 1, 0)
-            box.BackgroundColor3 = Color3.fromRGB(15, 17, 24)
-            box.BackgroundTransparency = 0.2
-            box.Parent = bill
-            Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
-
-            local stroke = Instance.new("UIStroke", box)
-            stroke.Color = data.Color
-            stroke.Thickness = 1.6
-
-            local img = Instance.new("ImageLabel")
-            img.Size = UDim2.new(0, 36, 0, 36)
-            img.Position = UDim2.new(0, 6, 0.5, -18)
-            img.BackgroundTransparency = 1
-            img.Image = data.Image
-            img.ImageColor3 = data.Color
-            img.Parent = box
-            Instance.new("UICorner", img).CornerRadius = UDim.new(0, 6)
-
-            local txt = Instance.new("TextLabel")
-            txt.Size = UDim2.new(1, -48, 1, 0)
-            txt.Position = UDim2.new(0, 46, 0, 0)
-            txt.BackgroundTransparency = 1
-            txt.TextColor3 = data.Color
-            txt.TextStrokeTransparency = 0
-            txt.Font = Enum.Font.GothamBold
-            txt.TextSize = 10
-            txt.TextXAlignment = Enum.TextXAlignment.Left
-            txt.Text = string.format("[%s]\n%s\n%s", data.Rarity, data.Name, data.Weight)
-            txt.Parent = box
-
-            bill.Parent = targetPart
-            table.insert(activeESP, bill)
-        end
-    end
-end
-
-task.spawn(function()
-    while true do
-        if espEnabled then refreshESP() end
-        task.wait(2)
-    end
-end)
 
 -- =======================================================
 -- USER INTERFACE
@@ -550,7 +482,7 @@ local radarTabBtn = Instance.new("TextButton")
 radarTabBtn.Size = UDim2.new(0.48, 0, 1, 0)
 radarTabBtn.Position = UDim2.new(0.52, 0, 0, 0)
 radarTabBtn.BackgroundColor3 = Color3.fromRGB(30, 32, 42)
-radarTabBtn.Text = "Rare Radar (Divine/Eternal)"
+radarTabBtn.Text = "Rare Egg Radar"
 radarTabBtn.TextColor3 = Color3.fromRGB(190, 190, 190)
 radarTabBtn.Font = Enum.Font.GothamBold
 radarTabBtn.TextSize = 11
@@ -563,7 +495,7 @@ cheatsScroll.Size = UDim2.new(1, -20, 1, -90)
 cheatsScroll.Position = UDim2.new(0, 10, 0, 85)
 cheatsScroll.BackgroundTransparency = 1
 cheatsScroll.ScrollBarThickness = 3
-cheatsScroll.CanvasSize = UDim2.new(0, 0, 0, 430)
+cheatsScroll.CanvasSize = UDim2.new(0, 0, 0, 380)
 cheatsScroll.Parent = mainFrame
 
 local cheatsLayout = Instance.new("UIListLayout")
@@ -600,7 +532,7 @@ radarTabBtn.MouseButton1Click:Connect(function()
 end)
 
 -- =======================================================
--- TAB 1: CHEATS (SPEED SLIDER AT TOP)
+-- TAB 1: CHEATS (SPEED SLIDER & AUTO-STEAL ON SPAWN)
 -- =======================================================
 
 local sliderCard = Instance.new("Frame")
@@ -755,45 +687,67 @@ fpsBtn.MouseButton1Click:Connect(function()
 end)
 
 makeToggle(cheatsScroll, "Infinite Jump (10x)", false, function(on) setInfJump(on) end)
-makeToggle(cheatsScroll, "ESP Rare Spawns (Divine/Eternal)", false, function(on)
-    espEnabled = on
-    if on then refreshESP() else clearESP() end
-end)
 
-local autoStealBtn, instantStealBtn
-autoStealBtn = makeToggle(cheatsScroll, "Auto Steal Rares (1s to Base)", false, function(on)
-    autoStealEnabled = on
-    if on and instantStealEnabled then
-        instantStealEnabled = false
-        instantStealBtn.BackgroundColor3 = Color3.fromRGB(34, 36, 48)
-        instantStealBtn.Text = "Instant Steal Rares (TP to Base): OFF"
-    end
-end)
-
-instantStealBtn = makeToggle(cheatsScroll, "Instant Steal Rares (TP to Base)", false, function(on)
-    instantStealEnabled = on
-    if on and autoStealEnabled then
-        autoStealEnabled = false
-        autoStealBtn.BackgroundColor3 = Color3.fromRGB(34, 36, 48)
-        autoStealBtn.Text = "Auto Steal Rares (1s to Base): OFF"
+makeToggle(cheatsScroll, "Auto Steal On Rare Spawn", false, function(on)
+    autoStealOnSpawn = on
+    if on then
+        notify("Auto-Steal Active", "Monitoring map for high-value egg spawns!")
     end
 end)
 
 -- =======================================================
--- TAB 2: RARE RADAR WITH EGG IMAGES
+-- TAB 2: RARE EGG RADAR WITH VISUAL EGG PREVIEWS
 -- =======================================================
+local function renderEggVisual(parentFrame, eggData)
+    if eggData.Texture then
+        local img = Instance.new("ImageLabel")
+        img.Size = UDim2.new(0, 38, 0, 38)
+        img.Position = UDim2.new(0, 6, 0.5, -19)
+        img.BackgroundTransparency = 1
+        img.Image = eggData.Texture
+        img.Parent = parentFrame
+        Instance.new("UICorner", img).CornerRadius = UDim.new(0, 6)
+    else
+        -- Clean 3D Viewport preview
+        local vp = Instance.new("ViewportFrame")
+        vp.Size = UDim2.new(0, 38, 0, 38)
+        vp.Position = UDim2.new(0, 6, 0.5, -19)
+        vp.BackgroundTransparency = 1
+        vp.LightColor = Color3.fromRGB(255, 255, 255)
+        vp.Ambient = Color3.fromRGB(200, 200, 200)
+        vp.Parent = parentFrame
+        Instance.new("UICorner", vp).CornerRadius = UDim.new(0, 6)
+
+        pcall(function()
+            local clone = eggData.Part:Clone()
+            clone.CFrame = CFrame.new(0, 0, 0)
+            clone.Anchored = true
+            clone.Parent = vp
+
+            local cam = Instance.new("Camera")
+            cam.Parent = vp
+            vp.CurrentCamera = cam
+
+            local size = clone.Size
+            local maxDim = math.max(size.X, size.Y, size.Z)
+            local dist = maxDim > 0.5 and maxDim * 1.8 or 3
+            cam.CFrame = CFrame.new(Vector3.new(0, size.Y * 0.1, dist), Vector3.new(0, 0, 0))
+        end)
+    end
+end
+
 local function buildRadar()
     for _, child in ipairs(radarScroll:GetChildren()) do
         if not child:IsA("UIListLayout") then child:Destroy() end
     end
 
-    local eggs = scanStrictRares()
+    local eggs = scanRareMapEggs()
 
     if #eggs == 0 then
         local empty = Instance.new("TextLabel")
         empty.Size = UDim2.new(0.96, 0, 0, 40)
         empty.BackgroundTransparency = 1
-        empty.Text = "Scanning... Waiting for Divine or Ethereal eggs."
+        empty.Text = "Scanning... Waiting for rare eggs to spawn."
         empty.TextColor3 = Color3.fromRGB(180, 180, 180)
         empty.Font = Enum.Font.Gotham
         empty.TextSize = 11
@@ -814,20 +768,14 @@ local function buildRadar()
         stroke.Color = data.Color
         stroke.Thickness = 1.4
 
-        local img = Instance.new("ImageLabel")
-        img.Size = UDim2.new(0, 36, 0, 36)
-        img.Position = UDim2.new(0, 6, 0.5, -18)
-        img.BackgroundTransparency = 1
-        img.Image = data.Image
-        img.ImageColor3 = data.Color
-        img.Parent = card
-        Instance.new("UICorner", img).CornerRadius = UDim.new(0, 6)
+        -- Render Egg Image
+        renderEggVisual(card, data)
 
         local lbl = Instance.new("TextLabel")
         lbl.Size = UDim2.new(0.54, 0, 1, 0)
         lbl.Position = UDim2.new(0, 48, 0, 0)
         lbl.BackgroundTransparency = 1
-        lbl.Text = string.format("%s [%s]\n%dm away | %s", data.Name, data.Rarity, data.Distance, data.Weight)
+        lbl.Text = string.format("%s\n%s | %dm\n%s", data.Name, data.Tier, data.Distance, data.Weight)
         lbl.TextColor3 = data.Color
         lbl.Font = Enum.Font.GothamBold
         lbl.TextSize = 10
@@ -856,6 +804,7 @@ local function buildRadar()
     end
 end
 
+-- Live Auto-Updater for Radar (every 2.5s)
 task.spawn(function()
     while true do
         if radarScroll.Visible then
