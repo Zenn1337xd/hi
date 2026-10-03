@@ -1,0 +1,174 @@
+-- =======================================================
+-- Ride a Pet Hub | Owned by kevan#9999
+-- Hosted Raw Script for loadstring
+-- =======================================================
+
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+local targetParent = nil
+
+-- Determine appropriate UI container (CoreGui fallback to PlayerGui)
+local hasCoreGui, _ = pcall(function()
+    targetParent = CoreGui
+end)
+if not hasCoreGui or not targetParent then
+    targetParent = player:WaitForChild("PlayerGui")
+end
+
+-- Destroy previous session to prevent duplicates
+if targetParent:FindFirstChild("RidePetHub") then
+    targetParent.RidePetHub:Destroy()
+end
+
+-- Notification on launch
+pcall(function()
+    StarterGui:SetCore("SendNotification", {
+        Title = "Ride a Pet Hub",
+        Text = "Owned by kevan#9999",
+        Duration = 4
+    })
+end)
+
+-- Root ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "RidePetHub"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = targetParent
+
+-- Main Window Frame
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 310, 0, 245)
+mainFrame.Position = UDim2.new(0.5, -155, 0.4, -122)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = mainFrame
+
+-- Title
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -45, 0, 22)
+title.Position = UDim2.new(0, 12, 0, 8)
+title.BackgroundTransparency = 1
+title.Text = "Ride a Pet Hub"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 15
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = mainFrame
+
+-- Owner Credit Sub-header
+local ownerTag = Instance.new("TextLabel")
+ownerTag.Size = UDim2.new(1, -45, 0, 16)
+ownerTag.Position = UDim2.new(0, 12, 0, 28)
+ownerTag.BackgroundTransparency = 1
+ownerTag.Text = "Owned by kevan#9999"
+ownerTag.TextColor3 = Color3.fromRGB(114, 137, 218) -- Discord blurple accent
+ownerTag.TextSize = 12
+ownerTag.Font = Enum.Font.GothamMedium
+ownerTag.TextXAlignment = Enum.TextXAlignment.Left
+ownerTag.Parent = mainFrame
+
+-- Close Button
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 24, 0, 24)
+closeBtn.Position = UDim2.new(1, -32, 0, 8)
+closeBtn.BackgroundColor3 = Color3.fromRGB(220, 65, 65)
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.TextSize = 12
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.Parent = mainFrame
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeBtn
+
+closeBtn.MouseButton1Click:Connect(function()
+    screenGui:Destroy()
+end)
+
+-- Layout Container
+local buttonContainer = Instance.new("Frame")
+buttonContainer.Size = UDim2.new(1, 0, 1, -52)
+buttonContainer.Position = UDim2.new(0, 0, 0, 52)
+buttonContainer.BackgroundTransparency = 1
+buttonContainer.Parent = mainFrame
+
+local layout = Instance.new("UIListLayout")
+layout.Parent = buttonContainer
+layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Padding = UDim.new(0, 8)
+
+-- Helper Button Generator
+local function makeButton(text, order, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.92, 0, 0, 36)
+    btn.BackgroundColor3 = Color3.fromRGB(40, 42, 54)
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(240, 240, 240)
+    btn.TextSize = 13
+    btn.Font = Enum.Font.GothamMedium
+    btn.LayoutOrder = order
+    btn.Parent = buttonContainer
+
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 6)
+    btnCorner.Parent = btn
+
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+-- Feature 1: WalkSpeed Boost
+makeButton("Boost WalkSpeed (35)", 1, function()
+    local char = player.Character or player.CharacterAdded:Wait()
+    local hum = char:FindFirstChildWhichIsA("Humanoid")
+    if hum then
+        hum.WalkSpeed = 35
+    end
+end)
+
+-- Feature 2: Super Jump
+makeButton("Super Jump (100)", 2, function()
+    local char = player.Character or player.CharacterAdded:Wait()
+    local hum = char:FindFirstChildWhichIsA("Humanoid")
+    if hum then
+        hum.JumpPower = 100
+    end
+end)
+
+-- Feature 3: Auto-Equip Pet Tool
+makeButton("Equip Held Pet", 3, function()
+    local char = player.Character or player.CharacterAdded:Wait()
+    local backpack = player:FindFirstChild("Backpack")
+    if backpack then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if tool:IsA("Tool") and (string.find(string.lower(tool.Name), "pet") or string.find(string.lower(tool.Name), "ride")) then
+                tool.Parent = char
+                break
+            end
+        end
+    end
+end)
+
+-- Feature 4: Reset Character Speeds
+makeButton("Reset Speed & Jump", 4, function()
+    local char = player.Character or player.CharacterAdded:Wait()
+    local hum = char:FindFirstChildWhichIsA("Humanoid")
+    if hum then
+        hum.WalkSpeed = 16
+        hum.JumpPower = 50
+    end
+end)
+
+print("[Ride a Pet Hub] Successfully executed. Owned by kevan#9999")
