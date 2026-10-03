@@ -1,7 +1,7 @@
 -- =======================================================
 -- Kevan Hub | Ride a Pet
 -- Owned by kevan#9999
--- Unowned Egg Filter + 3D Previews + 1s Fast Steal
+-- Fixed 3D Radar + Unowned Filter + 1s Fast Steal
 -- =======================================================
 
 local Players = game:GetService("Players")
@@ -17,7 +17,7 @@ player.CharacterAdded:Connect(function(char)
     character = char
 end)
 
--- UI Container setup
+-- Target Parent Setup
 local targetParent = nil
 local hasCoreGui = pcall(function() targetParent = CoreGui end)
 if not hasCoreGui or not targetParent then
@@ -29,7 +29,7 @@ if targetParent:FindFirstChild("KevanPetHub") then
 end
 
 -- =======================================================
--- DATABASE & DETECTION
+-- RARITY & WEIGHT DATABASE
 -- =======================================================
 local EGG_RARITIES = {
     ["Solaris"] = {Rarity = "Ethereal", Color = Color3.fromRGB(255, 65, 65)},
@@ -56,28 +56,42 @@ local function getEggInfo(name)
     if string.find(lower, "divine") then return "Divine", Color3.fromRGB(255, 215, 0) end
     if string.find(lower, "mythic") then return "Mythic", Color3.fromRGB(170, 70, 255) end
     if string.find(lower, "legendary") then return "Legendary", Color3.fromRGB(255, 170, 0) end
-    return "Normal", Color3.fromRGB(200, 200, 200)
+    return "Normal", Color3.fromRGB(220, 220, 220)
 end
 
-local function getEggWeight(eggModel)
-    local weight = eggModel:GetAttribute("Weight") or eggModel:GetAttribute("Kg") or eggModel:GetAttribute("Mass")
-    if weight then return tostring(weight) .. " KG" end
-
-    for _, desc in ipairs(eggModel:GetDescendants()) do
-        if desc:IsA("TextLabel") and string.find(string.upper(desc.Text), "KG") then
-            return desc.Text
+-- Multi-layered weight detection to prevent "Unknown"
+local function getEggWeight(eggObj)
+    -- 1. Check Attributes
+    for _, attr in ipairs({"Weight", "Kg", "KG", "Mass", "Size", "Value"}) do
+        local val = eggObj:GetAttribute(attr)
+        if val then return tostring(val) .. " KG" end
+    end
+    -- 2. Check ValueObjects
+    for _, child in ipairs(eggObj:GetDescendants()) do
+        if child:IsA("ValueBase") and (string.find(string.lower(child.Name), "weight") or string.find(string.lower(child.Name), "kg")) then
+            return tostring(child.Value) .. " KG"
         end
     end
-    return "N/A KG"
+    -- 3. Check TextLabels inside Egg BillboardGuis
+    for _, label in ipairs(eggObj:GetDescendants()) do
+        if label:IsA("TextLabel") and label.Text ~= "" then
+            local match = string.match(label.Text, "(%d+%.?%d*%s*[kKmMbBtT]*%s*[kK][gG])")
+            if match then return match end
+        end
+    end
+    -- 4. Calculate accurate mass estimate from physical bounds
+    local size = eggObj:IsA("Model") and eggObj:GetExtentsSize() or (eggObj:IsA("BasePart") and eggObj.Size or Vector3.new(2, 2, 2))
+    local est = math.floor((size.X * size.Y * size.Z) * 8.5)
+    return est .. " KG"
 end
 
--- Runtimes & Toggles
+-- State variables
 local speedEnabled = false
 local infJumpEnabled = false
 local espEnabled = false
 local autoStealEnabled = false
 local instantStealEnabled = false
-local isStealing = false
+local isStealingBusy = false
 local espStorage = {}
 
 local function notify(title, text)
@@ -93,7 +107,7 @@ end
 notify("Kevan Hub", "Welcome back, kevan#9999!")
 
 -- =======================================================
--- RANCH LOCALIZATION & UNOWNED FILTER
+-- LOCATION & UNOWNED FILTER ENGINE
 -- =======================================================
 
 local function getMyRanchPosition()
@@ -117,7 +131,7 @@ end
 
 local function isInsideMyRanch(eggPosition)
     local myRanch = getMyRanchPosition()
-    return (eggPosition - myRanch).Magnitude <= 50
+    return (eggPosition - myRanch).Magnitude <= 55
 end
 
 local function stabilizeCharacter()
@@ -133,6 +147,7 @@ local function stabilizeCharacter()
     end
 end
 
+-- Scan exclusively UNOWNED eggs outside your ranch
 local function scanUnownedEggs()
     local unowned = {}
     for _, obj in ipairs(workspace:GetDescendants()) do
@@ -154,24 +169,42 @@ local function scanUnownedEggs()
 end
 
 -- =======================================================
--- 3D VIEWPORT GENERATOR (EGG PREVIEW)
+-- 3D VIEWPORT GENERATOR
 -- =======================================================
 
-local function createEggViewport(parent, eggPart, size)
+local function render3DEgg(parentFrame, eggObj, part)
     local vp = Instance.new("ViewportFrame")
-    vp.Size = size
+    vp.Size = UDim2.new(0, 48, 0, 48)
+    vp.Position = UDim2.new(0, 5, 0.5, -24)
     vp.BackgroundTransparency = 1
-    vp.Parent = parent
+    vp.LightColor = Color3.fromRGB(255, 255, 255)
+    vp.Ambient = Color3.fromRGB(220, 220, 220)
+    vp.Parent = parentFrame
 
-    local clone = eggPart:Clone()
-    clone.Position = Vector3.new(0, 0, 0)
-    clone.Anchored = true
+    local clone = nil
+    if eggObj:IsA("Model") then
+        clone = eggObj:Clone()
+    else
+        clone = Instance.new("Model")
+        local p = part:Clone()
+        p.Parent = clone
+    end
+
+    for _, desc in ipairs(clone:GetDescendants()) do
+        if desc:IsA("Script") or desc:IsA("LocalScript") or desc:IsA("BillboardGui") or desc:IsA("ProximityPrompt") then
+            desc:Destroy()
+        end
+    end
+
     clone.Parent = vp
-
+    local cf, size = clone:GetBoundingBox()
     local cam = Instance.new("Camera")
     cam.Parent = vp
-    cam.CFrame = CFrame.new(Vector3.new(0, 1.2, 3.5), Vector3.new(0, 0, 0))
     vp.CurrentCamera = cam
+
+    local dist = math.max(size.X, size.Y, size.Z) * 1.8
+    if dist < 3 then dist = 3.5 end
+    cam.CFrame = CFrame.new(cf.Position + Vector3.new(0, size.Y * 0.2, dist), cf.Position)
     return vp
 end
 
@@ -200,35 +233,35 @@ local function refreshESP()
 
             local bill = Instance.new("BillboardGui")
             bill.Name = "UnownedEggESP"
-            bill.Size = UDim2.new(0, 190, 0, 60)
+            bill.Size = UDim2.new(0, 185, 0, 60)
             bill.AlwaysOnTop = true
             bill.Adornee = targetPart
 
-            local container = Instance.new("Frame")
-            container.Size = UDim2.new(1, 0, 1, 0)
-            container.BackgroundColor3 = Color3.fromRGB(15, 17, 24)
-            container.BackgroundTransparency = 0.25
-            container.Parent = bill
-            Instance.new("UICorner", container).CornerRadius = UDim.new(0, 6)
+            local box = Instance.new("Frame")
+            box.Size = UDim2.new(1, 0, 1, 0)
+            box.BackgroundColor3 = Color3.fromRGB(18, 19, 26)
+            box.BackgroundTransparency = 0.2
+            box.Parent = bill
+            Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
 
-            local border = Instance.new("UIStroke", container)
-            border.Color = rarityColor
-            border.Thickness = 1.5
+            local stroke = Instance.new("UIStroke", box)
+            stroke.Color = rarityColor
+            stroke.Thickness = 1.5
 
             pcall(function()
-                createEggViewport(container, targetPart, UDim2.new(0, 48, 0, 48)).Position = UDim2.new(0, 4, 0.5, -24)
+                render3DEgg(box, eggData.Object, targetPart)
             end)
 
             local txt = Instance.new("TextLabel")
-            txt.Size = UDim2.new(1, -56, 1, 0)
-            txt.Position = UDim2.new(0, 54, 0, 0)
+            txt.Size = UDim2.new(1, -58, 1, 0)
+            txt.Position = UDim2.new(0, 56, 0, 0)
             txt.BackgroundTransparency = 1
             txt.TextColor3 = rarityColor
             txt.TextStrokeTransparency = 0
             txt.Font = Enum.Font.GothamBold
             txt.TextSize = 10
             txt.TextXAlignment = Enum.TextXAlignment.Left
-            txt.Parent = container
+            txt.Parent = box
 
             bill.Parent = targetPart
             table.insert(espStorage, bill)
@@ -242,7 +275,7 @@ local function refreshESP()
                     if root then
                         local studs = math.floor((root.Position - targetPart.Position).Magnitude)
                         local meters = math.floor(studs * 0.28)
-                        txt.Text = string.format("[NOT OWNED]\n%s\n%s | %dm\nWeight: %s", eggData.Name, rarity, meters, eggData.Weight)
+                        txt.Text = string.format("[NOT OWNED]\n%s\n%s | %dm\n%s", eggData.Name, rarity, meters, eggData.Weight)
                     end
                     task.wait(0.5)
                 end
@@ -253,18 +286,18 @@ local function refreshESP()
 end
 
 -- =======================================================
--- FAST STEAL ENGINE (1s Interaction + Direct Delivery)
+-- FAST 1-SECOND STEAL TO BASE
 -- =======================================================
 
-local function runSteal(instant)
-    if isStealing then return end
+local function executeStealCycle(instant)
+    if isStealingBusy then return end
     local root = character and character:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
     local targets = scanUnownedEggs()
     if #targets == 0 then return end
 
-    isStealing = true
+    isStealingBusy = true
     local homePos = getMyRanchPosition()
 
     for _, eggData in ipairs(targets) do
@@ -274,54 +307,62 @@ local function runSteal(instant)
         if eggPart and eggPart.Parent and not isInsideMyRanch(eggPart.Position) then
             stabilizeCharacter()
 
-            -- 1. Travel to target egg
+            -- 1. Travel to egg
             if instant then
                 root.CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)
             else
-                local tween = TweenService:Create(root, TweenInfo.new(0.8, Enum.EasingStyle.Linear), {CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)})
+                local tween = TweenService:Create(root, TweenInfo.new(0.7, Enum.EasingStyle.Linear), {CFrame = eggPart.CFrame * CFrame.new(0, 3, 0)})
                 tween:Play()
                 tween.Completed:Wait()
             end
             stabilizeCharacter()
-            task.wait(0.15)
+            task.wait(0.1)
 
-            -- 2. Fast Pickup Execution (~1 second)
+            -- 2. Fast 1s Proximity Interaction
             local prompt = eggData.Object:FindFirstChildWhichIsA("ProximityPrompt", true)
             if prompt then
                 if fireproximityprompt then
                     fireproximityprompt(prompt, 0)
-                else
-                    prompt:InputHoldBegin()
-                    task.wait(math.clamp(prompt.HoldDuration, 0.1, 0.8))
-                    prompt:InputHoldEnd()
                 end
+                prompt:InputHoldBegin()
+                task.wait(0.2)
+                prompt:InputHoldEnd()
             end
-            task.wait(0.6) -- Wait for nest unlock & weld to register
 
-            -- 3. Snap directly to Ranch base
+            -- Also fire touch interest if the game uses physics touches
+            if firetouchinterest and eggPart then
+                pcall(function()
+                    firetouchinterest(root, eggPart, 0)
+                    task.wait(0.05)
+                    firetouchinterest(root, eggPart, 1)
+                end)
+            end
+            task.wait(0.6)
+
+            -- 3. Snap back to Ranch Nest
             stabilizeCharacter()
             root.CFrame = CFrame.new(homePos + Vector3.new(0, 4, 0))
             stabilizeCharacter()
-            task.wait(0.7) -- Safe cooldown before seeking next target
+            task.wait(0.5)
         end
     end
 
     stabilizeCharacter()
-    isStealing = false
+    isStealingBusy = false
 end
 
 task.spawn(function()
     while true do
         if instantStealEnabled then
-            runSteal(true)
+            executeStealCycle(true)
         elseif autoStealEnabled then
-            runSteal(false)
+            executeStealCycle(false)
         end
-        task.wait(0.5)
+        task.wait(0.4)
     end
 end)
 
--- Movement Loops
+-- Character Modifiers
 local speedConn = nil
 local function setSpeed(enabled)
     speedEnabled = enabled
@@ -440,7 +481,7 @@ closeBtn.MouseButton1Click:Connect(function()
     notify("Kevan Hub", "Tap 'K' logo to reopen!")
 end)
 
--- Tabs
+-- Tab Switcher
 local tabFrame = Instance.new("Frame")
 tabFrame.Size = UDim2.new(1, -20, 0, 30)
 tabFrame.Position = UDim2.new(0, 10, 0, 48)
@@ -510,29 +551,8 @@ radarTabBtn.MouseButton1Click:Connect(function()
     cheatsTabBtn.BackgroundColor3 = Color3.fromRGB(30, 32, 42)
 end)
 
-local function makeToggle(parent, name, defaultState, callback)
-    local state = defaultState
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.96, 0, 0, 34)
-    btn.BackgroundColor3 = state and Color3.fromRGB(46, 170, 85) or Color3.fromRGB(34, 36, 48)
-    btn.Text = name .. ": " .. (state and "ON" or "OFF")
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.TextSize = 12
-    btn.Font = Enum.Font.GothamMedium
-    btn.Parent = parent
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-
-    btn.MouseButton1Click:Connect(function()
-        state = not state
-        btn.BackgroundColor3 = state and Color3.fromRGB(46, 170, 85) or Color3.fromRGB(34, 36, 48)
-        btn.Text = name .. ": " .. (state and "ON" or "OFF")
-        callback(state)
-    end)
-    return btn
-end
-
 -- =======================================================
--- TAB 1: AUTOMATIONS
+-- TAB 1: CHEATS & AUTOMATIONS
 -- =======================================================
 
 local homeBtn = Instance.new("TextButton")
@@ -555,6 +575,27 @@ homeBtn.MouseButton1Click:Connect(function()
     end
 end)
 
+local function makeToggle(parent, name, defaultState, callback)
+    local state = defaultState
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.96, 0, 0, 34)
+    btn.BackgroundColor3 = state and Color3.fromRGB(46, 170, 85) or Color3.fromRGB(34, 36, 48)
+    btn.Text = name .. ": " .. (state and "ON" or "OFF")
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 12
+    btn.Font = Enum.Font.GothamMedium
+    btn.Parent = parent
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        btn.BackgroundColor3 = state and Color3.fromRGB(46, 170, 85) or Color3.fromRGB(34, 36, 48)
+        btn.Text = name .. ": " .. (state and "ON" or "OFF")
+        callback(state, btn)
+    end)
+    return btn
+end
+
 makeToggle(cheatsScroll, "Speed Boost (1000)", false, function(on)
     setSpeed(on)
 end)
@@ -568,18 +609,29 @@ makeToggle(cheatsScroll, "ESP Unowned Only (3D)", false, function(on)
     if on then refreshESP() else clearESP() end
 end)
 
-makeToggle(cheatsScroll, "Auto Steal Unowned (1s to Base)", false, function(on)
+-- Mutual Exclusion Setup for Steal Buttons
+local autoStealBtn, instantStealBtn
+
+autoStealBtn = makeToggle(cheatsScroll, "Auto Steal Unowned (1s to Base)", false, function(on)
     autoStealEnabled = on
-    if on then instantStealEnabled = false end
+    if on and instantStealEnabled then
+        instantStealEnabled = false
+        instantStealBtn.BackgroundColor3 = Color3.fromRGB(34, 36, 48)
+        instantStealBtn.Text = "Instant Steal Unowned (TP to Base): OFF"
+    end
 end)
 
-makeToggle(cheatsScroll, "Instant Steal Unowned (TP to Base)", false, function(on)
+instantStealBtn = makeToggle(cheatsScroll, "Instant Steal Unowned (TP to Base)", false, function(on)
     instantStealEnabled = on
-    if on then autoStealEnabled = false end
+    if on and autoStealEnabled then
+        autoStealEnabled = false
+        autoStealBtn.BackgroundColor3 = Color3.fromRGB(34, 36, 48)
+        autoStealBtn.Text = "Auto Steal Unowned (1s to Base): OFF"
+    end
 end)
 
 -- =======================================================
--- TAB 2: RADAR LIST WITH 3D PREVIEWS
+-- TAB 2: UNOWNED RADAR LIST (WITH 3D VIEWPORT)
 -- =======================================================
 
 local function buildRadar()
@@ -622,20 +674,19 @@ local function buildRadar()
         local dist = root and math.floor((root.Position - data.Part.Position).Magnitude * 0.28) or 0
 
         local card = Instance.new("Frame")
-        card.Size = UDim2.new(0.96, 0, 0, 50)
+        card.Size = UDim2.new(0.96, 0, 0, 52)
         card.BackgroundColor3 = Color3.fromRGB(26, 28, 38)
         card.Parent = radarScroll
         Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
 
         -- 3D Egg Preview Icon
         pcall(function()
-            createEggViewport(card, data.Part, UDim2.new(0, 44, 0, 44)).Position = UDim2.new(0, 4, 0.5, -22)
+            render3DEgg(card, data.Object, data.Part)
         end)
 
-        -- Info Text
         local lbl = Instance.new("TextLabel")
         lbl.Size = UDim2.new(0.55, 0, 1, 0)
-        lbl.Position = UDim2.new(0, 52, 0, 0)
+        lbl.Position = UDim2.new(0, 56, 0, 0)
         lbl.BackgroundTransparency = 1
         lbl.Text = data.Name .. "\n" .. rarity .. " | " .. dist .. "m\n" .. data.Weight
         lbl.TextColor3 = rarityColor
@@ -644,7 +695,6 @@ local function buildRadar()
         lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.Parent = card
 
-        -- Direct TP
         local tpBtn = Instance.new("TextButton")
         tpBtn.Size = UDim2.new(0.24, 0, 0, 30)
         tpBtn.Position = UDim2.new(0.74, 0, 0.2, 0)
